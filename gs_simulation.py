@@ -36,6 +36,8 @@ from utils.decode_param import *
 from utils.transformation_utils import *
 from utils.camera_view_utils import *
 from utils.render_utils import *
+from utils.video_utils import *
+from utils.vlm_utils import *
 
 wp.init()
 wp.config.verify_cuda = True
@@ -187,23 +189,43 @@ if __name__ == "__main__":
     device = "cuda:0"
     filling_params = preprocessing_params["particle_filling"]
 
+    # clustering is postponed until now because only the points that need to be simulated need to be clustered.
+    # PART1_DONE: use DBSCAN to cluster the points
+    cls_pos, cls_opacity, cls_cov, cls_screen_points, cls_shs, cls_size = DBSCAN_cluster(
+        transformed_pos,
+        init_opacity,
+        init_cov,
+        init_screen_points,
+        init_shs
+    )
+
+    # PART2_TODO: add and change some code here to cooperate with function "generate_bounded_image".
+    generate_bounded_image('bounded_image')
+    call_vlm('bounded_image','generated_data')
+    cls_E = get_initial_params('generated_data')
+    # ensure the data is correctly generated
+    assert cls_E.shape[0] == len(transformed_pos)
+
+    # PART4_TODO: Change things below this line ---------------------------------
+    cls_mpm_init_pos = []
     if filling_params is not None:
-        print("Filling internal particles...")
-        mpm_init_pos = fill_particles(
-            pos=transformed_pos,
-            opacity=init_opacity,
-            cov=init_cov,
-            grid_n=filling_params["n_grid"],
-            max_samples=filling_params["max_particles_num"],
-            grid_dx=material_params["grid_lim"] / filling_params["n_grid"],
-            density_thres=filling_params["density_threshold"],
-            search_thres=filling_params["search_threshold"],
-            max_particles_per_cell=filling_params["max_partciels_per_cell"],
-            search_exclude_dir=filling_params["search_exclude_direction"],
-            ray_cast_dir=filling_params["ray_cast_direction"],
-            boundary=filling_params["boundary"],
-            smooth=filling_params["smooth"],
-        ).to(device=device)
+        for i in range(0, len(transformed_pos)):
+            print("Filling internal particles...")
+            cls_mpm_init_pos.append(fill_particles(
+                pos=transformed_pos[i],
+                opacity=init_opacity[i],
+                cov=init_cov[i],
+                grid_n=filling_params["n_grid"],
+                max_samples=filling_params["max_particles_num"],
+                grid_dx=material_params["grid_lim"] / filling_params["n_grid"],
+                density_thres=filling_params["density_threshold"],
+                search_thres=filling_params["search_threshold"],
+                max_particles_per_cell=filling_params["max_partciels_per_cell"],
+                search_exclude_dir=filling_params["search_exclude_direction"],
+                ray_cast_dir=filling_params["ray_cast_direction"],
+                boundary=filling_params["boundary"],
+                smooth=filling_params["smooth"],
+            ).to(device=device))
 
         if args.debug:
             particle_position_tensor_to_ply(mpm_init_pos, "./log/filled_particles.ply")

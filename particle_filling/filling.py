@@ -288,6 +288,53 @@ def get_particle_volume(pos, grid_n: int, grid_dx: float, unifrom: bool = False)
         return particle_vol.to_torch()
 
 
+def DBSCAN_cluster(
+    pos,
+    opacity,
+    cov,
+    screen_points,
+    shs
+):
+    # PART1_TODO: Use DBSCAN to divide the origin gaussian kernel set into several subsets
+    # e.g. the original pos is Tensor[num_gaus_total][3], then cls_pos should be a list of Tensor[num_gaus_in_subset][3]
+    # as for tensor cls_size, cls_size[i] is the size of cluster i.
+    return cls_pos, cls_opacity, cls_opacity, cls_screen_points, cls_shs, cls_size
+
+def get_aabb(
+    pos,
+    opacity,
+    cov,
+    screen_points,
+    shs
+):
+    # PART1_TODO: generate the aabb bounding box for a set of gaussian kernels.
+    # you can use it in the following function, and maybe it will be used in part2 as well.
+
+    # you should return two points, 
+    # the vertex with the smallest coords (among all vertices of the bounding box) (the left, down, back vertex)
+    # and the one with the largest coords (among all vertices of the bounding box) (the right, up, front vertex).
+    return coords_ldb, coords_ruf
+
+
+def fill_particles_MCIS(
+    pos,
+    opacity,
+    cov,
+    grid_n: int,
+    interior_num: int,
+    sample_num: int,
+    grid_dx: float,
+    search_thres=1.0,
+    boundary: list = None,
+):
+    # PART1_TODO: Use MCIS to complete the internal filling
+
+    # interior_num is the number of the intermediate points, sample_num is the number of final points
+
+    # return the exactly same result as the following function "fill_particles"
+    
+    return particles_tensor
+
 def fill_particles(
     pos,
     opacity,
