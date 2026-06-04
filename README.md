@@ -12,13 +12,6 @@
 
 
 
-1. DBSCAN 会有无法聚类的点 （周围点数不够让他成为核心，而他自己又不能被核心点触及），把这些点的集合也视作一簇，并放在列表的最后和其他类一并返回。
-2. 在 fill_particles 中，确保没有改变原本点的顺序，并且新加入的点全部放在原本点的后面。
-3. 将 fill_particles 的两个 num 参数改为一个 sample_ratio 参数 (指实际采样数量和初步确定的内部点数量的比值)。mcis_interior_num 改为由参数 "max_particles_per_cell" 以及 aabb 体积粗略确定，不需要按体积分配
-4. max_particles_num 参数理解为逐物体的最大填充数量
-
-
-
 ##### 改进内部填充方法
 
 以下操作全部在 `\particle_filling\filling.py` 文件中进行。

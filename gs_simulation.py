@@ -171,6 +171,9 @@ if __name__ == "__main__":
         init_opacity = init_opacity[mask, :]
         init_shs = init_shs[mask, :]
 
+    if rotated_pos.shape[0] == 0:
+        raise RuntimeError("There's nothing to simulate!")
+
     transformed_pos, scale_origin, original_mean_pos = transform2origin(rotated_pos, preprocessing_params["scale"])
     transformed_pos = shift2center111(transformed_pos)
 
