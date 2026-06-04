@@ -190,7 +190,7 @@ if __name__ == "__main__":
     filling_params = preprocessing_params["particle_filling"]
 
     # clustering is postponed until now because only the points that need to be simulated need to be clustered.
-    # PART1_DONE: use DBSCAN to cluster the points
+    # PART1_DONE: use DBSCAN to cluster the points. the last tensor stores the non-clustered points
     cls_pos, cls_opacity, cls_cov, cls_screen_points, cls_shs, cls_size = DBSCAN_cluster(
         transformed_pos,
         init_opacity,
@@ -198,25 +198,47 @@ if __name__ == "__main__":
         init_screen_points,
         init_shs
     )
+    num_items = len(cls_pos) - 1
+    assert num_items >= 0
+    cluster_index = []
+    for i in range (0, num_items):
+        cluster_index.append(None)
+        cluster_index.append(cls_pos[i].shape[0])
 
     # PART2_TODO: add and change some code here to cooperate with function "generate_bounded_image".
     generate_bounded_image('bounded_image')
     call_vlm('bounded_image','generated_data')
-    cls_E = get_initial_params('generated_data')
-    # ensure the data is correctly generated
-    assert cls_E.shape[0] == len(transformed_pos)
+    cls_E, cls_filling_method = get_initial_params('generated_data')
 
-    # PART4_TODO: Change things below this line ---------------------------------
+    # ensure the data is correctly generated
+    # assert num_items == cls_E.shape[0]
+
+    if cls_filling_method is None or filling_params.get("use_vlm", False):
+        filling_methods = resolve_filling_methods(
+            filling_params.get("methods", None),
+            filling_params.get("method", "legacy"),
+            len(cls_pos),
+        )
+    
+    cluster_sizes = [int(size.item()) for size in cls_size]
+    cluster_budgets = allocate_filling_budgets(
+        cluster_sizes,
+        filling_params["max_particles_num"],
+        filling_params["min_particles_num_per_object"],
+    )
+
+    # FRAMEWORK_DONE: fill the items one by one
     cls_mpm_init_pos = []
+    num_particles = 0
     if filling_params is not None:
-        for i in range(0, len(transformed_pos)):
-            print("Filling internal particles...")
+        for i in range(0, num_items):
+            print(str.encode(f"""Filling internal particles of item {i} ..."""))
             cls_mpm_init_pos.append(fill_particles(
-                pos=transformed_pos[i],
-                opacity=init_opacity[i],
-                cov=init_cov[i],
+                pos=cls_pos[i],
+                opacity=cls_opacity[i],
+                cov=cls_cov[i],
                 grid_n=filling_params["n_grid"],
-                max_samples=filling_params["max_particles_num"],
+                max_samples=cluster_budgets[i],
                 grid_dx=material_params["grid_lim"] / filling_params["n_grid"],
                 density_thres=filling_params["density_threshold"],
                 search_thres=filling_params["search_threshold"],
@@ -225,40 +247,82 @@ if __name__ == "__main__":
                 ray_cast_dir=filling_params["ray_cast_direction"],
                 boundary=filling_params["boundary"],
                 smooth=filling_params["smooth"],
+                method=cls_filling_method[i],
+                sample_ratio=filling_params.get("mcis_sample_ratio", None),
+                mcis_sigma=filling_params.get("mcis_sigma", 0.02),
             ).to(device=device))
 
-        if args.debug:
-            particle_position_tensor_to_ply(mpm_init_pos, "./log/filled_particles.ply")
-    else:
-        mpm_init_pos = transformed_pos.to(device=device)
+            cluster_index[2*i] = num_particles
+            cluster_index[2*i + 1] = num_particles + cluster_index[2*i + 1]
+            num_particles += cls_mpm_init_pos[i].shape[0]
+        
+        cls_mpm_init_pos.append(transformed_pos[num_items].to(device=device))
+        cluster_index.append(num_particles)
+        num_particles += cls_mpm_init_pos[num_items].shape[0]
+        cluster_index.append(num_particles)
 
-    # init the mpm solver
+        if args.debug:
+            particle_position_tensor_list_to_ply(cls_mpm_init_pos, "./log/filled_particles.ply")
+        
+    else:
+        for i in range(0, num_items+1):
+            cls_mpm_init_pos.append(transformed_pos[i].to(device=device))
+
+            cluster_index[2*i] = num_particles
+            cluster_index[2*i + 1] = num_particles + cluster_index[2*i + 1]
+            num_particles += cls_mpm_init_pos[i].shape[0]
+
+    # FRAMEWORK_DONE: concat the position list
+    mpm_init_pos = torch.cat(cls_mpm_init_pos, dim=0)
+
+    # FRAMEWORK_DONE: concat the tensor in the lists after initializing them
+    # init the mpm parameters
     print("Initializing MPM solver and setting up boundary conditions...")
+
+    if filling_params is not None and filling_params["visualize"] == True:
+        for i in range(0, num_items):
+            cls_shs[i], cls_opacity[i], cls_cov[i] = init_filled_particles(
+                mpm_init_pos[cluster_index[2*i]:cluster_index[2*i+1]],
+                cls_shs[i],
+                cls_cov[i],
+                cls_opacity[i],
+                mpm_init_pos[cluster_index[2*i+1]:cluster_index[2*i+2]],
+            )
+        mpm_init_cov = torch.cat(cls_cov, dim=0)
+        opacity = torch.cat(cls_opacity, dim=0)
+        shs = torch.cat(cls_shs, dim=0)
+        gs_num = num_particles
+    else:
+        mpm_init_cov = torch.zeros((mpm_init_pos.shape[0], 6), device=device)
+        shs = torch.zeros((mpm_init_pos.shape[0], init_shs.shape[1]), device=device)
+        opacity = torch.zeros((mpm_init_pos.shape[0]), device=device)
+
+        for i in range(0, num_items+1):
+            mpm_init_cov[cluster_index[2*i]:cluster_index[2*i + 1]] = cls_cov[i]
+            shs[cluster_index[2*i]:cluster_index[2*i + 1]] = cls_cov[i]
+            opacity[cluster_index[2*i]:cluster_index[2*i + 1]] = cls_opacity[i]
+        
+        gs_num = num_particles
+
     mpm_init_vol = get_particle_volume(
         mpm_init_pos,
         material_params["n_grid"],
         material_params["grid_lim"] / material_params["n_grid"],
         unifrom=material_params["material"] == "sand",
     ).to(device=device)
-
-    if filling_params is not None and filling_params["visualize"] == True:
-        shs, opacity, mpm_init_cov = init_filled_particles(
-            mpm_init_pos[:gs_num],
-            init_shs,
-            init_cov,
-            init_opacity,
-            mpm_init_pos[gs_num:],
-        )
-        gs_num = mpm_init_pos.shape[0]
-    else:
-        mpm_init_cov = torch.zeros((mpm_init_pos.shape[0], 6), device=device)
-        mpm_init_cov[:gs_num] = init_cov
-        shs = init_shs
-        opacity = init_opacity
-
+    
     if args.debug:
         print("check *.ply files to see if it's ready for simulation")
 
+    # FRAMEWORK_TODO: Change things below this line ---------------------------------
+    # build inverted index
+    inverted_index = torch.zeros((mpm_init_pos.shape[0]), dtype=torch.int8, device=device)
+    current_item = 0
+    for i in range(0, gs_num):
+        if (current_item < num_items and i >= cluster_index[current_item*2]):
+            current_item = current_item + 1
+        inverted_index = current_item
+    
     # set up the mpm solver
     mpm_solver = MPM_Simulator_WARP(10)
     mpm_solver.load_initial_data_from_torch(
@@ -268,7 +332,7 @@ if __name__ == "__main__":
         n_grid=material_params["n_grid"],
         grid_lim=material_params["grid_lim"],
     )
-    mpm_solver.set_parameters_dict(material_params)
+    mpm_solver.set_parameters_dict(cluster_index, inverted_index, cls_E, material_params)
 
     # Note: boundary conditions may depend on mass, so the order cannot be changed!
     set_boundary_conditions(mpm_solver, bc_params, time_params)

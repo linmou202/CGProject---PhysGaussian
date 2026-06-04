@@ -244,7 +244,7 @@ class MPM_Simulator_WARP:
     def set_parameters(self, device="cuda:0", **kwargs):
         self.set_parameters_dict(device, kwargs)
 
-    def set_parameters_dict(self, kwargs={}, device="cuda:0"):
+    def set_parameters_dict(self, cluster_index, inverted_index, cls_E, kwargs={}, device="cuda:0"):
         if "material" in kwargs:
             if kwargs["material"] == "jelly":
                 self.mpm_model.material = 0

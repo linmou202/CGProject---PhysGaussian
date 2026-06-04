@@ -86,3 +86,30 @@ end_header
         f.write(str.encode(header))
         f.write(position.tobytes())
         print("write", filename)
+
+def particle_position_tensor_list_to_ply(position_tensor_list, filename):
+    if os.path.exists(filename):
+        os.remove(filename)
+    
+    num_clusters = len(position_tensor_list)
+
+    with open(filename, "wb") as f:  # write binary
+        header = f"""ply
+format binary_little_endian 1.0
+total cluster numbers {num_clusters}
+property float x
+property float y
+property float z
+end_header
+"""
+        f.write(str.encode(header))
+        for i in range(0, len(position_tensor_list)):
+            position = position_tensor_list[i].clone().detach().cpu().numpy()
+            num_particles = (position).shape[0]
+            position = position.astype(np.float32)
+            subheader = f"""
+item number {i} with {num_particles} particles
+"""
+            f.write(str.encode(subheader))
+            f.write(position.tobytes())
+        print("write", filename)

@@ -1,5 +1,6 @@
 import sys
 import os
+import torch
 sys.path.append(os.path.dirname(os.path.realpath(__file__)))
 
 from ..particle_filling.filling import get_aabb
@@ -30,7 +31,8 @@ def call_vlm(
 def get_initial_params(
     file_name
 ):
+    E = torch.zeros(1)
     # PART2_TODO: Read the file "\generated_data\vlm_data\file_name"
 
-    # Return a Tensor E consisting of Young's Modulous
-    return E
+    # Return a tensor of Young's Modulous E , and a tensor of filling method FT (if decided not to estimate filling method, then return None instead) as well.
+    return E, None

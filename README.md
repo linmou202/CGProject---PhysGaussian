@@ -12,11 +12,18 @@
 
 
 
+1. DBSCAN 会有无法聚类的点 （周围点数不够让他成为核心，而他自己又不能被核心点触及），把这些点的集合也视作一簇，并放在列表的最后和其他类一并返回。
+2. 在 fill_particles 中，确保没有改变原本点的顺序，并且新加入的点全部放在原本点的后面。
+3. 将 fill_particles 的两个 num 参数改为一个 sample_ratio 参数 (指实际采样数量和初步确定的内部点数量的比值)。mcis_interior_num 改为由参数 "max_particles_per_cell" 以及 aabb 体积粗略确定，不需要按体积分配
+4. max_particles_num 参数理解为逐物体的最大填充数量
+
+
+
 ##### 改进内部填充方法
 
 以下操作全部在 `\particle_filling\filling.py` 文件中进行。
 
-1. 编写 `DBSCAN_cluster` 函数，实现 FastPhysGS 提到的聚簇算法 (DBSCAN)。
+1. 编写 `DBSCAN_cluster` 函数，实现 FastPhysGS 提到的聚簇算法 (DBSCAN)。丢弃所有无法被算法聚类的点。
 2. 编写辅助函数 `get_aabb`，实现绑定箱的计算。
 3. 编写 `fill_particles_MCIS` 函数，实现 FastPhysGS 提到的填充方法 (MCIS 采样)。
 4. 修改 `fill_particles` 以及其它必要函数，为原本的内部填充方法提供逐物体填充的支持。
@@ -49,6 +56,11 @@
 3. 在 `\utils\video_utils.py` 文件种编写 `get_video_frames` 函数，从视频格式读出帧序列并返回。
 
 
+
+P.S. 框架修改：
+
+1. 用一个 2N 大小的 int 数组 Ind 存储粒子的分界线；Ind[2k] 代表第 k 个物体的原粒子，Ind[2k+1] 代表第 k 个物体的填充粒子。 
+2. 构建 WARP_MPM_SOLVER 之前，必须把 cls 前缀全部整合为 init 前缀。
 
 ##### 实现 PhysDreamer 的优化算法
 

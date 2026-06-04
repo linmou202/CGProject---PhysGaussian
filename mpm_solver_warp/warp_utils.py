@@ -37,6 +37,10 @@ class MPMModelStruct:
     ####### for PhysGaussian: covariance
     update_cov_with_F: int
 
+    # FRAMEWORK_DONE: add item parameters
+    E_item = wp.array(dtype=float)
+    cluster_index = wp.array(dtype=int)
+
 
 @wp.struct
 class MPMStateStruct:
