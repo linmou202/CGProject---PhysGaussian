@@ -297,8 +297,8 @@ def DBSCAN_cluster(
 ):
     # PART1_TODO: Use DBSCAN to divide the origin gaussian kernel set into several subsets
     # e.g. the original pos is Tensor[num_gaus_total][3], then cls_pos should be a list of Tensor[num_gaus_in_subset][3]
-    # as for tensor cls_size, cls_size[i] is the size of cluster i.
-    return cls_pos, cls_opacity, cls_opacity, cls_screen_points, cls_shs, cls_size
+    # the last tensor stores the points that are too isolated to be categorized
+    return cls_pos, cls_opacity, cls_opacity, cls_screen_points, cls_shs
 
 def get_aabb(
     pos,
