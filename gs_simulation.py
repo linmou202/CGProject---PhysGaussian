@@ -189,34 +189,53 @@ if __name__ == "__main__":
     device = "cuda:0"
     filling_params = preprocessing_params["particle_filling"]
 
-    # clustering is postponed until now because only the points that need to be simulated need to be clustered.
-    # PART1_DONE: use DBSCAN to cluster the points
-    cls_pos, cls_opacity, cls_cov, cls_screen_points, cls_shs, cls_size = DBSCAN_cluster(
-        transformed_pos,
-        init_opacity,
-        init_cov,
-        init_screen_points,
-        init_shs
-    )
-
-    # PART2_TODO: add and change some code here to cooperate with function "generate_bounded_image".
-    generate_bounded_image('bounded_image')
-    call_vlm('bounded_image','generated_data')
-    cls_E = get_initial_params('generated_data')
-    # ensure the data is correctly generated
-    assert cls_E.shape[0] == len(transformed_pos)
-
-    # PART4_TODO: Change things below this line ---------------------------------
-    cls_mpm_init_pos = []
     if filling_params is not None:
-        for i in range(0, len(transformed_pos)):
-            print("Filling internal particles...")
-            cls_mpm_init_pos.append(fill_particles(
-                pos=transformed_pos[i],
-                opacity=init_opacity[i],
-                cov=init_cov[i],
+        # clustering is postponed until now because only the points that need to be simulated need to be clustered.
+        # PART1_DONE: use DBSCAN to cluster the points
+        cls_pos, cls_opacity, cls_cov, cls_screen_points, cls_shs, cls_size = DBSCAN_cluster(
+            transformed_pos,
+            init_opacity,
+            init_cov,
+            init_screen_points,
+            init_shs
+        )
+
+        # PART2_TODO: add and change some code here to cooperate with function "generate_bounded_image".
+        cls_E = None
+        if filling_params.get("use_vlm", False):
+            generate_bounded_image('bounded_image')
+            call_vlm('bounded_image','generated_data')
+            cls_E = get_initial_params('generated_data')
+            # ensure the data is correctly generated
+            assert cls_E.shape[0] == len(cls_pos)
+
+        cluster_sizes = [int(size.item()) for size in cls_size]
+        filling_methods = resolve_filling_methods(
+            filling_params.get("methods", None),
+            filling_params.get("method", "legacy"),
+            len(cls_pos),
+        )
+        cluster_budgets = allocate_filling_budgets(
+            cluster_sizes,
+            filling_params["max_particles_num"],
+            filling_params["min_particles_num_per_object"],
+        )
+
+        filled_particles = []
+
+        for i in range(0, len(cls_pos)):
+            cluster_size = cluster_sizes[i]
+            cluster_budget = cluster_budgets[i]
+            print(
+                f"Filling object {i}: method={filling_methods[i]}, "
+                f"original_particles={cluster_size}, max_new_particles={cluster_budget}"
+            )
+            cluster_filled_pos = fill_particles(
+                pos=cls_pos[i],
+                opacity=cls_opacity[i],
+                cov=cls_cov[i],
                 grid_n=filling_params["n_grid"],
-                max_samples=filling_params["max_particles_num"],
+                max_samples=cluster_budget,
                 grid_dx=material_params["grid_lim"] / filling_params["n_grid"],
                 density_thres=filling_params["density_threshold"],
                 search_thres=filling_params["search_threshold"],
@@ -225,7 +244,23 @@ if __name__ == "__main__":
                 ray_cast_dir=filling_params["ray_cast_direction"],
                 boundary=filling_params["boundary"],
                 smooth=filling_params["smooth"],
-            ).to(device=device))
+                method=filling_methods[i],
+                interior_num=filling_params.get("mcis_interior_num", None),
+                sample_num=filling_params.get("mcis_sample_num", None),
+                mcis_sigma=filling_params.get("mcis_sigma", 0.02),
+            ).to(device=device)
+
+            new_particles = cluster_filled_pos[cluster_size:]
+            if new_particles.shape[0] > 0:
+                filled_particles.append(new_particles)
+
+        if len(filled_particles) > 0:
+            mpm_init_pos = torch.cat(
+                [transformed_pos.to(device=device)] + filled_particles,
+                dim=0,
+            )
+        else:
+            mpm_init_pos = transformed_pos.to(device=device)
 
         if args.debug:
             particle_position_tensor_to_ply(mpm_init_pos, "./log/filled_particles.ply")
