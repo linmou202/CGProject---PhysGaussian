@@ -1,4 +1,8 @@
-# CG - PhysGaussian Project
+## 问题拆解
+
+1. 仍然手动设定所有边界条件，在框架中复现 PhysDreamer 和 FastPhysGS 的部分内容。
+2. (optional) 添加对于初速度学习的支持。
+3. (optional) 添加对于碎裂的支持。
 
 
 
@@ -13,29 +17,28 @@
 以下操作全部在 `\particle_filling\filling.py` 文件中进行。
 
 1. 编写 `DBSCAN_cluster` 函数，实现 FastPhysGS 提到的聚簇算法 (DBSCAN)。
-2. 编写 `fill_particles_MCIS` 函数，实现 FastPhysGS 提到的填充方法 (MCIS 采样)。
-3. 修改 `fill_particles` 以及其它必要函数，为原本的内部填充方法提供逐物体填充的支持。
-4. (optional) 按照 VLM 的返回结果 (按下文所示)，为每个物体调用不同的填充方式。
+2. 编写辅助函数 `get_aabb`，实现绑定箱的计算。
+3. 编写 `fill_particles_MCIS` 函数，实现 FastPhysGS 提到的填充方法 (MCIS 采样)。
+4. 修改 `fill_particles` 以及其它必要函数，为原本的内部填充方法提供逐物体填充的支持。
+5. (optional) 按照 VLM 的返回结果 (按下文所示)，为每个物体调用不同的填充方式。
 
 
 
 ##### VLM 识别
 
-参考 FastPhysGS。可以选择以下两种实现手段中的任意一种：
+参考 FastPhysGS。
 
-###### 第一种（在线使用 VLM）
+1. 在 `\utils\vlm_utils.py` 中编写 `generate_bounded_image` 函数，并在 `\gs_simulation.py` 下的相应位置添加必要代码，从而生成一张带 aabb 绑定框以及编号的图片到  `\generated_data\bounded_image`  下。你可以选择 2D/3D 的做法。
 
-1. 在 `\utils\vlm_utils.py` 中编写 `generate_bounded_image` 函数，为 VLM 生成带 aabb 绑定框以及编号的图片。
-2. 在 `\utils\vlm_utils.py` 中编写 `get_initial_params` 函数。其将预先设计好合适的提示词以及上述图片一并自动提供给 VLM，让他提供对于对应编号的物体的杨氏模量的预测值。用一个 list (第 i 个元素存储了第 i 个物体的杨氏模量) 作为这个函数的返回值即可。
+   > 个人认为 3D 会更简单。
+
+2. 在 `\utils\vlm_utils.py` 中编写 `call_vlm` 函数。设计合适的提示词，与上述图片一起手动提供给 VLM，让他提供对于对应编号的物体的杨氏模量的预测值，将数据保存在 `\generated_data\vlm_data` 文件夹下。
+
+   > 或者，你可以选择 pass 这个函数，手动处理这一步。
+
 3. (optional) 让 VLM 同时预测物体的空心程度。
 
-###### 第二种（离线使用 VLM）
-
-1. 在 `\utils\vlm_utils.py` 中编写 `generate_bounded_image` 函数，为 VLM 生成带 aabb 绑定框以及编号的图片。
-2. 设计合适的提示词，与上述图片一起手动提供给 VLM，让他提供对于对应编号的物体的杨氏模量的预测值。
-3. (optional) 让 VLM 同时预测物体的空心程度。
-4. 手动将 AI 输出的数据保存在 `\generated_data\vlm_data` 文件夹下。
-5. 在  `\utils\vlm_utils.py` 中编写 `get_initial_params` 函数，从上述文件中读取出一个 list 并返回即可 (list 内容同上)。
+4. 在  `\utils\vlm_utils.py` 中编写 `get_initial_params` 函数，从上述文件中读取出一个 Tensor 并返回即可。
 
 
 
