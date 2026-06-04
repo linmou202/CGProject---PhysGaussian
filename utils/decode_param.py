@@ -177,6 +177,27 @@ def decode_param_json(json_file):
         
         if not "visualize" in filling_params.keys():
             filling_params["visualize"] = False
+
+        if not "method" in filling_params.keys():
+            filling_params["method"] = "legacy"
+
+        if not "methods" in filling_params.keys():
+            filling_params["methods"] = None
+
+        if not "min_particles_num_per_object" in filling_params.keys():
+            filling_params["min_particles_num_per_object"] = 8192
+
+        if not "mcis_sigma" in filling_params.keys():
+            filling_params["mcis_sigma"] = 0.02
+
+        if not "mcis_interior_num" in filling_params.keys():
+            filling_params["mcis_interior_num"] = None
+
+        if not "mcis_sample_num" in filling_params.keys():
+            filling_params["mcis_sample_num"] = None
+
+        if not "use_vlm" in filling_params.keys():
+            filling_params["use_vlm"] = False
     else:
         preprocessing_params["particle_filling"] = None
 
