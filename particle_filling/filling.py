@@ -422,34 +422,16 @@ def _labels_to_cluster_indices(
     attach_radius=DBSCAN_NOISE_ATTACH_RADIUS,
 ):
     clusters = []
-    noise_indices = []
+    unclustered_indices = []
 
     for label in sorted(label for label in np.unique(labels) if label >= 0):
         indices = np.flatnonzero(labels == label).tolist()
         if len(indices) >= min_cluster_size:
             clusters.append(indices)
         else:
-            noise_indices.extend(indices)
+            unclustered_indices.extend(indices)
 
-    noise_indices.extend(np.flatnonzero(labels < 0).tolist())
-
-    if not clusters:
-        if points.shape[0] == 0:
-            return []
-        return [np.arange(points.shape[0], dtype=np.int64)]
-
-    centers = np.asarray([points[indices].mean(axis=0) for indices in clusters])
-    detached_noise = []
-    for point_id in noise_indices:
-        distances = np.linalg.norm(centers - points[point_id], axis=1)
-        closest = int(np.argmin(distances))
-        if distances[closest] <= attach_radius:
-            clusters[closest].append(point_id)
-        else:
-            detached_noise.append(point_id)
-
-    if detached_noise:
-        clusters.append(detached_noise)
+    unclustered_indices.extend(np.flatnonzero(labels < 0).tolist())
 
     order = sorted(
         range(len(clusters)),
@@ -460,7 +442,12 @@ def _labels_to_cluster_indices(
             -len(clusters[cluster_idx]),
         ),
     )
-    return [np.asarray(sorted(clusters[idx]), dtype=np.int64) for idx in order]
+    ordered_clusters = [
+        np.asarray(sorted(clusters[idx]), dtype=np.int64)
+        for idx in order
+    ]
+    unclustered = np.asarray(sorted(unclustered_indices), dtype=np.int64)
+    return ordered_clusters + [unclustered]
 
 
 def _cov_upper_to_mats(cov_upper):
@@ -647,10 +634,6 @@ def DBSCAN_cluster(
 ):
     """Cluster Gaussian kernels into object-level subsets."""
     pos_np = _to_numpy(pos).reshape(-1, 3).astype(np.float64)
-    if pos_np.shape[0] == 0:
-        cls_size = torch.zeros(0, dtype=torch.long, device=pos.device)
-        return [], [], [], [], [], cls_size
-
     labels = _dbscan_labels(pos_np, eps=eps, min_samples=min_samples)
     cluster_indices = _labels_to_cluster_indices(
         labels,
@@ -772,21 +755,57 @@ def fill_particles(
     method: str = "legacy",
     interior_num: int = None,
     sample_num: int = None,
+    sample_ratio: float = None,
     mcis_sigma: float = MCIS_SIGMA,
 ):
     method = (method or "legacy").lower()
     normalized_method = normalize_filling_method(method)
     if normalized_method == "mcis":
         particle_budget = max(0, int(max_samples))
-        if sample_num is None:
-            sample_num = min(particle_budget, max(int(pos.shape[0]) * 2, 1024))
-        else:
-            sample_num = min(int(sample_num), particle_budget)
         if interior_num is None:
+            active_pos = pos
+            active_cov = cov
+            if boundary is not None:
+                assert len(boundary) == 6
+                mask = torch.ones(pos.shape[0], dtype=torch.bool, device=pos.device)
+                for i in range(3):
+                    mask = torch.logical_and(mask, pos[:, i] > boundary[2 * i])
+                    mask = torch.logical_and(mask, pos[:, i] < boundary[2 * i + 1])
+                active_pos = pos[mask]
+                active_cov = cov[mask]
+
+            if active_pos.shape[0] < 4:
+                return pos.clone()
+
+            active_pos_np = _to_numpy(active_pos).reshape(-1, 3).astype(np.float64)
+            active_cov_np = _to_numpy(active_cov)
+            coords_ldb, coords_ruf, _ = _compute_aabb(
+                active_pos_np,
+                active_cov_np,
+                min_padding=max(float(grid_dx), 0.01),
+            )
+            extent = np.maximum(coords_ruf - coords_ldb, 0.0)
+            aabb_volume = float(np.prod(extent))
+            cell_volume = max(float(grid_dx) ** 3, 1e-12)
+            cell_count = max(1, int(np.ceil(aabb_volume / cell_volume)))
             interior_num = min(
                 MCIS_MAX_CANDIDATES,
-                max(int(sample_num) * 10, int(pos.shape[0]) * 20),
+                cell_count * max(0, int(max_particles_per_cell)),
             )
+        else:
+            interior_num = min(MCIS_MAX_CANDIDATES, max(0, int(interior_num)))
+
+        if sample_num is None:
+            if sample_ratio is None:
+                sample_ratio = 0.05
+            sample_num = int(np.ceil(interior_num * max(0.0, float(sample_ratio))))
+        else:
+            sample_num = int(sample_num)
+
+        sample_num = min(max(0, sample_num), particle_budget, MCIS_MAX_SAMPLES)
+        if interior_num <= 0 or sample_num <= 0:
+            return pos.clone()
+
         return fill_particles_MCIS(
             pos=pos,
             opacity=opacity,
