@@ -192,6 +192,8 @@ def decode_param_json(json_file):
 
         if not "mcis_sample_ratio" in filling_params.keys():
             filling_params["mcis_sample_ratio"] = 0.05
+        if filling_params["mcis_sample_ratio"] is None:
+            filling_params["mcis_sample_ratio"] = 0.05
 
         if not "use_vlm" in filling_params.keys():
             filling_params["use_vlm"] = False
