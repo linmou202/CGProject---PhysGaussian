@@ -67,6 +67,12 @@ P.S. 框架修改：
 
 
 
+## 待测试
+
+1. init_screen_points 没有经过重排，不知道对实验结果有无影响。可以查看 gaussian_rasterizer 来确认，但我没能成功安装这个东西。
+
+
+
 ## 附录：论文总结
 
 ###### Triplane：https://blog.csdn.net/flow_specter/article/details/130677562

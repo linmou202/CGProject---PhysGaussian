@@ -10,6 +10,7 @@ import os
 import numpy as np
 import json
 from tqdm import tqdm
+from train_material import *
 
 # Gaussian splatting dependencies
 from utils.sh_utils import eval_sh
@@ -24,8 +25,9 @@ from utils.system_utils import searchForMaxIteration
 from utils.graphics_utils import focal2fov
 
 # MPM dependencies
-from mpm_solver_warp.engine_utils import *
-from mpm_solver_warp.mpm_solver_warp import MPM_Simulator_WARP
+from mpm_solver_warp.engine_utils import setup_trainer
+from mpm_solver_warp.mpm_data_structure import *
+from mpm_solver_warp.mpm_solver_diff import MPMWARPDiff
 import warp as wp
 
 # Particle filling dependencies
@@ -216,24 +218,25 @@ if __name__ == "__main__":
     # ensure the data is correctly generated
     # assert num_items == cls_E.shape[0]
 
-    if cls_filling_method is None or filling_params.get("use_vlm", False):
-        filling_methods = resolve_filling_methods(
-            filling_params.get("methods", None),
-            filling_params.get("method", "legacy"),
-            len(cls_pos),
-        )
-    
-    cluster_sizes = [int(size.item()) for size in cls_size]
-    cluster_budgets = allocate_filling_budgets(
-        cluster_sizes,
-        filling_params["max_particles_num"],
-        filling_params["min_particles_num_per_object"],
-    )
-
     # FRAMEWORK_DONE: fill the items one by one
     cls_mpm_init_pos = []
     num_particles = 0
     if filling_params is not None:
+        
+        if cls_filling_method is None or filling_params.get("use_vlm", False):
+            filling_methods = resolve_filling_methods(
+                filling_params.get("methods", None),
+                filling_params.get("method", "legacy"),
+                len(cls_pos),
+            )
+        
+        cluster_sizes = [int(size.item()) for size in cls_size]
+        cluster_budgets = allocate_filling_budgets(
+            cluster_sizes,
+            filling_params["max_particles_num"],
+            filling_params["min_particles_num_per_object"],
+        )
+
         for i in range(0, num_items):
             print(str.encode(f"""Filling internal particles of item {i} ..."""))
             cls_mpm_init_pos.append(fill_particles(
@@ -250,16 +253,16 @@ if __name__ == "__main__":
                 ray_cast_dir=filling_params["ray_cast_direction"],
                 boundary=filling_params["boundary"],
                 smooth=filling_params["smooth"],
-                method=cls_filling_method[i],
-                sample_ratio=filling_params.get("mcis_sample_ratio", None),
-                mcis_sigma=filling_params.get("mcis_sigma", 0.02),
+                # method=cls_filling_method[i],
+                # sample_ratio=filling_params.get("mcis_sample_ratio", None),
+                # mcis_sigma=filling_params.get("mcis_sigma", 0.02),
             ).to(device=device))
 
             cluster_index[2*i] = num_particles
             cluster_index[2*i + 1] = num_particles + cluster_index[2*i + 1]
             num_particles += cls_mpm_init_pos[i].shape[0]
         
-        cls_mpm_init_pos.append(transformed_pos[num_items].to(device=device))
+        cls_mpm_init_pos.append(cls_pos[num_items].to(device=device))
         cluster_index.append(num_particles)
         num_particles += cls_mpm_init_pos[num_items].shape[0]
         cluster_index.append(num_particles)
@@ -269,18 +272,15 @@ if __name__ == "__main__":
         
     else:
         for i in range(0, num_items+1):
-            cls_mpm_init_pos.append(transformed_pos[i].to(device=device))
+            cls_mpm_init_pos.append(cls_pos[i].to(device=device))
 
             cluster_index[2*i] = num_particles
             cluster_index[2*i + 1] = num_particles + cluster_index[2*i + 1]
             num_particles += cls_mpm_init_pos[i].shape[0]
 
-    # FRAMEWORK_DONE: concat the position list
-    mpm_init_pos = torch.cat(cls_mpm_init_pos, dim=0)
-
     # FRAMEWORK_DONE: concat the tensor in the lists after initializing them
-    # init the mpm parameters
-    print("Initializing MPM solver and setting up boundary conditions...")
+    # init the mpm inputs
+    mpm_init_pos = torch.cat(cls_mpm_init_pos, dim=0)
 
     if filling_params is not None and filling_params["visualize"] == True:
         for i in range(0, num_items):
@@ -296,13 +296,13 @@ if __name__ == "__main__":
         shs = torch.cat(cls_shs, dim=0)
         gs_num = num_particles
     else:
-        mpm_init_cov = torch.zeros((mpm_init_pos.shape[0], 6), device=device)
-        shs = torch.zeros((mpm_init_pos.shape[0], init_shs.shape[1]), device=device)
-        opacity = torch.zeros((mpm_init_pos.shape[0]), device=device)
+        mpm_init_cov = torch.zeros((mpm_init_pos.shape[0], *init_cov.shape[1:]), device=device)
+        shs = torch.zeros((mpm_init_pos.shape[0], *init_shs.shape[1:]), device=device)
+        opacity = torch.zeros((mpm_init_pos.shape[0], *init_opacity.shape[1:]), device=device)
 
         for i in range(0, num_items+1):
             mpm_init_cov[cluster_index[2*i]:cluster_index[2*i + 1]] = cls_cov[i]
-            shs[cluster_index[2*i]:cluster_index[2*i + 1]] = cls_cov[i]
+            shs[cluster_index[2*i]:cluster_index[2*i + 1]] = cls_shs[i]
             opacity[cluster_index[2*i]:cluster_index[2*i + 1]] = cls_opacity[i]
         
         gs_num = num_particles
@@ -317,31 +317,7 @@ if __name__ == "__main__":
     if args.debug:
         print("check *.ply files to see if it's ready for simulation")
 
-    # FRAMEWORK_TODO: Change things below this line ---------------------------------
-    # build inverted index
-    inverted_index = torch.zeros((mpm_init_pos.shape[0]), dtype=torch.int8, device=device)
-    current_item = 0
-    for i in range(0, gs_num):
-        if (current_item < num_items and i >= cluster_index[current_item*2]):
-            current_item = current_item + 1
-        inverted_index = current_item
-    
-    # set up the mpm solver
-    mpm_solver = MPM_Simulator_WARP(10)
-    mpm_solver.load_initial_data_from_torch(
-        mpm_init_pos,
-        mpm_init_vol,
-        mpm_init_cov,
-        n_grid=material_params["n_grid"],
-        grid_lim=material_params["grid_lim"],
-    )
-    mpm_solver.set_parameters_dict(cluster_index, inverted_index, cls_E, material_params)
-
-    # Note: boundary conditions may depend on mass, so the order cannot be changed!
-    set_boundary_conditions(mpm_solver, bc_params, time_params)
-
-    mpm_solver.finalize_mu_lam()
-
+    # FRAMEWORK_DONE: set stage renderer
     # camera setting
     mpm_space_viewpoint_center = (
         torch.tensor(camera_params["mpm_space_viewpoint_center"]).reshape((1, 3)).cuda()
@@ -361,6 +337,57 @@ if __name__ == "__main__":
         scale_origin,
         original_mean_pos,
     )
+
+    stage_renderer = STAGERENDERER(
+        preprocessing_params["sim_area"],
+        rotation_matrices,
+        scale_origin,
+        original_mean_pos,
+        gaussians,
+        pipeline,
+        background,
+        model_path,
+        camera_params,
+        viewpoint_center_worldspace,
+        observant_coordinates,
+        unselected_pos,
+        unselected_cov,
+        unselected_opacity,
+        unselected_shs,
+        init_screen_points
+    )
+    stage_renderer.set_rasterizer(0)
+
+    # FRAMEWORK_TODO: Change things below this line ----------------------------------------
+    # build inverted index
+    inverted_index = torch.zeros((mpm_init_pos.shape[0]), dtype=torch.int8, device=device)
+    current_item = 0
+    for i in range(0, gs_num):
+        if (current_item < num_items and i >= cluster_index[current_item*2]):
+            current_item = current_item + 1
+        inverted_index[i] = current_item
+    
+    # set up the mpm solver
+    print("Initializing MPM solver and setting up boundary conditions...")
+
+    mpm_state = MPMStateStruct()
+    mpm_state.init(gs_num, device=device, requires_grad=True)
+
+
+    mpm_solver = MPMWARPDiff(10)
+    mpm_solver.load_initial_data_from_torch(
+        mpm_init_pos,
+        mpm_init_vol,
+        mpm_init_cov,
+        n_grid=material_params["n_grid"],
+        grid_lim=material_params["grid_lim"],
+    )
+    mpm_solver.set_parameters_dict(cluster_index, inverted_index, cls_E, material_params)
+
+    # Note: boundary conditions may depend on mass, so the order cannot be changed!
+    set_boundary_conditions(mpm_solver, bc_params, time_params)
+
+    mpm_solver.finalize_mu_lam()
 
     # run the simulation
     if args.output_ply or args.output_h5:
@@ -385,24 +412,7 @@ if __name__ == "__main__":
     height = None
     width = None
     for frame in tqdm(range(frame_num)):
-        current_camera = get_camera_view(
-            model_path,
-            default_camera_index=camera_params["default_camera_index"],
-            center_view_world_space=viewpoint_center_worldspace,
-            observant_coordinates=observant_coordinates,
-            show_hint=camera_params["show_hint"],
-            init_azimuthm=camera_params["init_azimuthm"],
-            init_elevation=camera_params["init_elevation"],
-            init_radius=camera_params["init_radius"],
-            move_camera=camera_params["move_camera"],
-            current_frame=frame,
-            delta_a=camera_params["delta_a"],
-            delta_e=camera_params["delta_e"],
-            delta_r=camera_params["delta_r"],
-        )
-        rasterize = initialize_resterize(
-            current_camera, gaussians, pipeline, background
-        )
+        stage_renderer.set_rasterizer(frame)
 
         for step in range(step_per_frame):
             mpm_solver.p2g2p(frame, substep_dt, device=device)
@@ -423,35 +433,8 @@ if __name__ == "__main__":
             cov3D = cov3D.view(-1, 6)[:gs_num].to(device)
             rot = rot.view(-1, 3, 3)[:gs_num].to(device)
 
-            pos = apply_inverse_rotations(
-                undotransform2origin(
-                    undoshift2center111(pos), scale_origin, original_mean_pos
-                ),
-                rotation_matrices,
-            )
-            cov3D = cov3D / (scale_origin * scale_origin)
-            cov3D = apply_inverse_cov_rotations(cov3D, rotation_matrices)
-            opacity = opacity_render
-            shs = shs_render
-            if preprocessing_params["sim_area"] is not None:
-                pos = torch.cat([pos, unselected_pos], dim=0)
-                cov3D = torch.cat([cov3D, unselected_cov], dim=0)
-                opacity = torch.cat([opacity_render, unselected_opacity], dim=0)
-                shs = torch.cat([shs_render, unselected_shs], dim=0)
-
-            colors_precomp = convert_SH(shs, current_camera, gaussians, pos, rot)
-            rendering, raddi = rasterize(
-                means3D=pos,
-                means2D=init_screen_points,
-                shs=None,
-                colors_precomp=colors_precomp,
-                opacities=opacity,
-                scales=None,
-                rotations=None,
-                cov3D_precomp=cov3D,
-            )
-            cv2_img = rendering.permute(1, 2, 0).detach().cpu().numpy()
-            cv2_img = cv2.cvtColor(cv2_img, cv2.COLOR_BGR2RGB)
+            cv2_img = stage_renderer.render_image_from_gaussian(pos, cov3D, opacity_render, shs_render, rot)
+            
             if height is None or width is None:
                 height = cv2_img.shape[0] // 2 * 2
                 width = cv2_img.shape[1] // 2 * 2

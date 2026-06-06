@@ -141,7 +141,7 @@
     "init_azimuthm": -90.0,
     "init_elevation": 30.0,
     "init_radius": 2.5,
-    "move_camera": true,
+    "move_camera": false,
     "delta_a": 0.5,
     "delta_e": 0.0,
     "delta_r": 0.0

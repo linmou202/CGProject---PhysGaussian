@@ -1,5 +1,5 @@
 import warp as wp
-from warp_utils import *
+from mpm_data_structure import *
 import numpy as np
 import math
 
@@ -19,6 +19,15 @@ def kirchoff_stress_FCR(
 def kirchoff_stress_neoHookean(
     F: wp.mat33, U: wp.mat33, V: wp.mat33, J: float, sig: wp.vec3, mu: float, lam: float
 ):
+    """
+    B = F * wp.transpose(F)
+    dev(B) = B - (1/3) * tr(B) * I
+
+    For a compressible Rivlin neo-Hookean materia, the cauchy stress is given by:
+    mu * J^(-2/3) * dev(B) + lam * J (J - 1) * I
+    see: https://en.wikipedia.org/wiki/Neo-Hookean_solid
+    """
+
     # compute kirchoff stress for FCR model (remember tau = P F^T)
     b = wp.vec3(sig[0] * sig[0], sig[1] * sig[1], sig[2] * sig[2])
     b_hat = b - wp.vec3(
@@ -29,6 +38,7 @@ def kirchoff_stress_neoHookean(
     tau = mu * J ** (-2.0 / 3.0) * b_hat + lam / 2.0 * (J * J - 1.0) * wp.vec3(
         1.0, 1.0, 1.0
     )
+
     return (
         U
         * wp.mat33(tau[0], 0.0, 0.0, 0.0, tau[1], 0.0, 0.0, 0.0, tau[2])
@@ -316,12 +326,42 @@ def update_cov(state: MPMStateStruct, p: int, grad_v: wp.mat33, dt: float):
     state.particle_cov[p * 6 + 5] = cov_np1[2, 2]
 
 
+@wp.func
+def update_cov_differentiable(
+    state: MPMStateStruct,
+    next_state: MPMStateStruct,
+    p: int,
+    grad_v: wp.mat33,
+    dt: float,
+):
+    cov_n = wp.mat33(0.0)
+    cov_n[0, 0] = state.particle_cov[p * 6]
+    cov_n[0, 1] = state.particle_cov[p * 6 + 1]
+    cov_n[0, 2] = state.particle_cov[p * 6 + 2]
+    cov_n[1, 0] = state.particle_cov[p * 6 + 1]
+    cov_n[1, 1] = state.particle_cov[p * 6 + 3]
+    cov_n[1, 2] = state.particle_cov[p * 6 + 4]
+    cov_n[2, 0] = state.particle_cov[p * 6 + 2]
+    cov_n[2, 1] = state.particle_cov[p * 6 + 4]
+    cov_n[2, 2] = state.particle_cov[p * 6 + 5]
+
+    cov_np1 = cov_n + dt * (grad_v * cov_n + cov_n * wp.transpose(grad_v))
+
+    next_state.particle_cov[p * 6] = cov_np1[0, 0]
+    next_state.particle_cov[p * 6 + 1] = cov_np1[0, 1]
+    next_state.particle_cov[p * 6 + 2] = cov_np1[0, 2]
+    next_state.particle_cov[p * 6 + 3] = cov_np1[1, 1]
+    next_state.particle_cov[p * 6 + 4] = cov_np1[1, 2]
+    next_state.particle_cov[p * 6 + 5] = cov_np1[2, 2]
+
+
 @wp.kernel
 def p2g_apic_with_stress(state: MPMStateStruct, model: MPMModelStruct, dt: float):
     # input given to p2g:   particle_stress
     #                       particle_x
     #                       particle_v
     #                       particle_C
+    # output:               grid_v_in, grid_m
     p = wp.tid()
     if state.particle_selection[p] == 0:
         stress = state.particle_stress[p]
@@ -353,11 +393,19 @@ def p2g_apic_with_stress(state: MPMStateStruct, model: MPMModelStruct, dt: float
                     iz = base_pos_z + k
                     weight = w[0, i] * w[1, j] * w[2, k]  # tricubic interpolation
                     dweight = compute_dweight(model, w, dw, i, j, k)
+
                     C = state.particle_C[p]
                     # if model.rpic = 0, standard apic
                     C = (1.0 - model.rpic_damping) * C + model.rpic_damping / 2.0 * (
                         C - wp.transpose(C)
                     )
+
+                    # C = (1.0 - model.rpic_damping) * state.particle_C[
+                    #     p
+                    # ] + model.rpic_damping / 2.0 * (
+                    #     state.particle_C[p] - wp.transpose(state.particle_C[p])
+                    # )
+
                     if model.rpic_damping < -0.001:
                         # standard pic
                         C = wp.mat33(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
@@ -413,6 +461,7 @@ def g2p(state: MPMStateStruct, model: MPMModelStruct, dt: float):
         new_v = wp.vec3(0.0, 0.0, 0.0)
         new_C = wp.mat33(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         new_F = wp.mat33(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
         for i in range(0, 3):
             for j in range(0, 3):
                 for k in range(0, 3):
@@ -430,14 +479,124 @@ def g2p(state: MPMStateStruct, model: MPMModelStruct, dt: float):
                     new_F = new_F + wp.outer(grid_v, dweight)
 
         state.particle_v[p] = new_v
-        state.particle_x[p] = state.particle_x[p] + dt * new_v
+        # state.particle_x[p] = state.particle_x[p] + dt * new_v
+        # state.particle_x[p] = state.particle_x[p] + dt * state.particle_v[p]
+
+        # wp.atomic_add(state.particle_x, p, dt * state.particle_v[p]) # old one is this..
+        wp.atomic_add(state.particle_x, p, dt * new_v)  # debug
+        # new_x = state.particle_x[p] + dt * state.particle_v[p]
+        # state.particle_x[p] = new_x
+
         state.particle_C[p] = new_C
+
         I33 = wp.mat33(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
         F_tmp = (I33 + new_F * dt) * state.particle_F[p]
         state.particle_F_trial[p] = F_tmp
+        # debug for jelly
+        # wp.atomic_add(state.particle_F_trial, p, new_F * dt * state.particle_F[p])
 
         if model.update_cov_with_F:
             update_cov(state, p, new_F, dt)
+
+
+@wp.kernel
+def g2p_differentiable(
+    state: MPMStateStruct, next_state: MPMStateStruct, model: MPMModelStruct, dt: float
+):
+    """
+    Compute:
+        next_state.particle_v, next_state.particle_x, next_state.particle_C, next_state.particle_F_trial
+    """
+    p = wp.tid()
+    if state.particle_selection[p] == 0:
+        grid_pos = state.particle_x[p] * model.inv_dx
+        base_pos_x = wp.int(grid_pos[0] - 0.5)
+        base_pos_y = wp.int(grid_pos[1] - 0.5)
+        base_pos_z = wp.int(grid_pos[2] - 0.5)
+        fx = grid_pos - wp.vec3(
+            wp.float(base_pos_x), wp.float(base_pos_y), wp.float(base_pos_z)
+        )
+        wa = wp.vec3(1.5) - fx
+        wb = fx - wp.vec3(1.0)
+        wc = fx - wp.vec3(0.5)
+        w = wp.mat33(
+            wp.cw_mul(wa, wa) * 0.5,
+            wp.vec3(0.0, 0.0, 0.0) - wp.cw_mul(wb, wb) + wp.vec3(0.75),
+            wp.cw_mul(wc, wc) * 0.5,
+        )
+        dw = wp.mat33(fx - wp.vec3(1.5), -2.0 * (fx - wp.vec3(1.0)), fx - wp.vec3(0.5))
+        new_v = wp.vec3(0.0, 0.0, 0.0)
+        # new_C = wp.mat33(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        new_C = wp.mat33(new_v, new_v, new_v)
+        
+        new_F = wp.mat33(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+        for i in range(0, 3):
+            for j in range(0, 3):
+                for k in range(0, 3):
+                    ix = base_pos_x + i
+                    iy = base_pos_y + j
+                    iz = base_pos_z + k
+                    dpos = wp.vec3(wp.float(i), wp.float(j), wp.float(k)) - fx
+                    weight = w[0, i] * w[1, j] * w[2, k]  # tricubic interpolation
+                    grid_v = state.grid_v_out[ix, iy, iz]
+                    new_v = (
+                        new_v + grid_v * weight
+                    )  # TODO, check gradient from static loop
+                    new_C = new_C + wp.outer(grid_v, dpos) * (
+                        weight * model.inv_dx * 4.0
+                    )
+                    dweight = compute_dweight(model, w, dw, i, j, k)
+                    new_F = new_F + wp.outer(grid_v, dweight)
+
+        next_state.particle_v[p] = new_v
+
+        # add clip here:
+        new_x = state.particle_x[p] + dt * new_v
+        dx = 1.0 / model.inv_dx
+        a_min = dx * 2.0
+        a_max = model.grid_lim - dx * 2.0
+
+        new_x_clamped = wp.vec3(
+            wp.clamp(new_x[0], a_min, a_max),
+            wp.clamp(new_x[1], a_min, a_max),
+            wp.clamp(new_x[2], a_min, a_max),
+        )
+        next_state.particle_x[p] = new_x_clamped
+
+        # next_state.particle_x[p] = new_x
+
+        next_state.particle_C[p] = new_C
+
+        I33_1 = wp.vec3(1.0, 0.0, 0.0)
+        I33_2 = wp.vec3(0.0, 1.0, 0.0)
+        I33_3 = wp.vec3(0.0, 0.0, 1.0)
+        I33 = wp.mat33(I33_1, I33_2, I33_3)
+        F_tmp = (I33 + new_F * dt) * state.particle_F[p]
+        next_state.particle_F_trial[p] = F_tmp
+
+        if 0:
+            update_cov_differentiable(state, next_state, p, new_F, dt)
+
+
+@wp.kernel
+def clip_particle_x(state: MPMStateStruct, model: MPMModelStruct):
+    p = wp.tid()
+
+    posx = state.particle_x[p]
+    if state.particle_selection[p] == 0:
+        dx = 1.0 / model.inv_dx
+        a_min = dx * 2.0
+        a_max = model.grid_lim - dx * 2.0
+        new_x = wp.vec3(
+            wp.clamp(posx[0], a_min, a_max),
+            wp.clamp(posx[1], a_min, a_max),
+            wp.clamp(posx[2], a_min, a_max),
+        )
+
+        state.particle_x[
+            p
+        ] = new_x  # Warn: this gives wrong gradient, don't use this for backward
 
 
 # compute (Kirchhoff) stress = stress(returnMap(F_trial))
@@ -445,6 +604,12 @@ def g2p(state: MPMStateStruct, model: MPMModelStruct, dt: float):
 def compute_stress_from_F_trial(
     state: MPMStateStruct, model: MPMModelStruct, dt: float
 ):
+    """
+    state.particle_F_trial => state.particle_F   # return mapping
+    state.particle_F => state.particle_stress    # stress-strain
+
+    TODO: check the gradient of SVD!  is wp.svd3 differentiable? I guess so
+    """
     p = wp.tid()
     if state.particle_selection[p] == 0:
         # apply return mapping
@@ -464,7 +629,7 @@ def compute_stress_from_F_trial(
             state.particle_F[p] = von_mises_return_mapping_with_damage(
                 state.particle_F_trial[p], model, p
             )
-        else:  # elastic
+        else:  # elastic, jelly, or neo-hookean
             state.particle_F[p] = state.particle_F_trial[p]
 
         # also compute stress here
@@ -492,69 +657,80 @@ def compute_stress_from_F_trial(
                 state.particle_F[p], U, V, sig, model.mu[p], model.lam[p]
             )
 
-        stress = (stress + wp.transpose(stress)) / 2.0  # enfore symmetry
-        state.particle_stress[p] = stress
+        if model.material == 6:
+            stress = kirchoff_stress_neoHookean(
+                state.particle_F[p], U, V, J, sig, model.mu[p], model.lam[p]
+            )
+        # stress = (stress + wp.transpose(stress)) / 2.0  # enfore symmetry
+        state.particle_stress[p] = (stress + wp.transpose(stress)) / 2.0
 
 
-@wp.kernel
-def compute_cov_from_F(state: MPMStateStruct, model: MPMModelStruct):
-    p = wp.tid()
+# @wp.kernel
+# def compute_cov_from_F(state: MPMStateStruct, model: MPMModelStruct):
+#     p = wp.tid()
 
-    F = state.particle_F_trial[p]
+#     F = state.particle_F_trial[p]
 
-    init_cov = wp.mat33(0.0)
-    init_cov[0, 0] = state.particle_init_cov[p * 6]
-    init_cov[0, 1] = state.particle_init_cov[p * 6 + 1]
-    init_cov[0, 2] = state.particle_init_cov[p * 6 + 2]
-    init_cov[1, 0] = state.particle_init_cov[p * 6 + 1]
-    init_cov[1, 1] = state.particle_init_cov[p * 6 + 3]
-    init_cov[1, 2] = state.particle_init_cov[p * 6 + 4]
-    init_cov[2, 0] = state.particle_init_cov[p * 6 + 2]
-    init_cov[2, 1] = state.particle_init_cov[p * 6 + 4]
-    init_cov[2, 2] = state.particle_init_cov[p * 6 + 5]
+#     init_cov = wp.mat33(0.0)
+#     init_cov[0, 0] = state.particle_init_cov[p * 6]
+#     init_cov[0, 1] = state.particle_init_cov[p * 6 + 1]
+#     init_cov[0, 2] = state.particle_init_cov[p * 6 + 2]
+#     init_cov[1, 0] = state.particle_init_cov[p * 6 + 1]
+#     init_cov[1, 1] = state.particle_init_cov[p * 6 + 3]
+#     init_cov[1, 2] = state.particle_init_cov[p * 6 + 4]
+#     init_cov[2, 0] = state.particle_init_cov[p * 6 + 2]
+#     init_cov[2, 1] = state.particle_init_cov[p * 6 + 4]
+#     init_cov[2, 2] = state.particle_init_cov[p * 6 + 5]
 
-    cov = F * init_cov * wp.transpose(F)
+#     cov = F * init_cov * wp.transpose(F)
 
-    state.particle_cov[p * 6] = cov[0, 0]
-    state.particle_cov[p * 6 + 1] = cov[0, 1]
-    state.particle_cov[p * 6 + 2] = cov[0, 2]
-    state.particle_cov[p * 6 + 3] = cov[1, 1]
-    state.particle_cov[p * 6 + 4] = cov[1, 2]
-    state.particle_cov[p * 6 + 5] = cov[2, 2]
+#     state.particle_cov[p * 6] = cov[0, 0]
+#     state.particle_cov[p * 6 + 1] = cov[0, 1]
+#     state.particle_cov[p * 6 + 2] = cov[0, 2]
+#     state.particle_cov[p * 6 + 3] = cov[1, 1]
+#     state.particle_cov[p * 6 + 4] = cov[1, 2]
+#     state.particle_cov[p * 6 + 5] = cov[2, 2]
 
 
-@wp.kernel
-def compute_R_from_F(state: MPMStateStruct, model: MPMModelStruct):
-    p = wp.tid()
+# @wp.kernel
+# def compute_R_from_F(state: MPMStateStruct, model: MPMModelStruct):
+#     p = wp.tid()
 
-    F = state.particle_F_trial[p]
+#     F = state.particle_F_trial[p]
 
-    # polar svd decomposition
-    U = wp.mat33(0.0)
-    V = wp.mat33(0.0)
-    sig = wp.vec3(0.0)
-    wp.svd3(F, U, sig, V)
+#     # polar svd decomposition
+#     U = wp.mat33(0.0)
+#     V = wp.mat33(0.0)
+#     sig = wp.vec3(0.0)
+#     wp.svd3(F, U, sig, V)
 
-    if wp.determinant(U) < 0.0:
-        U[0, 2] = -U[0, 2]
-        U[1, 2] = -U[1, 2]
-        U[2, 2] = -U[2, 2]
+#     if wp.determinant(U) < 0.0:
+#         U[0, 2] = -U[0, 2]
+#         U[1, 2] = -U[1, 2]
+#         U[2, 2] = -U[2, 2]
 
-    if wp.determinant(V) < 0.0:
-        V[0, 2] = -V[0, 2]
-        V[1, 2] = -V[1, 2]
-        V[2, 2] = -V[2, 2]
+#     if wp.determinant(V) < 0.0:
+#         V[0, 2] = -V[0, 2]
+#         V[1, 2] = -V[1, 2]
+#         V[2, 2] = -V[2, 2]
 
-    # compute rotation matrix
-    R = U * wp.transpose(V)
-    state.particle_R[p] = wp.transpose(R)
+#     # compute rotation matrix
+#     R = U * wp.transpose(V)
+#     state.particle_R[p] = wp.transpose(R) # particle R is removed
 
 
 @wp.kernel
 def add_damping_via_grid(state: MPMStateStruct, scale: float):
     grid_x, grid_y, grid_z = wp.tid()
-    state.grid_v_out[grid_x, grid_y, grid_z] = (
-        state.grid_v_out[grid_x, grid_y, grid_z] * scale
+    # state.grid_v_out[grid_x, grid_y, grid_z] = (
+    #     state.grid_v_out[grid_x, grid_y, grid_z] * scale
+    # )
+    wp.atomic_sub(
+        state.grid_v_out,
+        grid_x,
+        grid_y,
+        grid_z,
+        (1.0 - scale) * state.grid_v_out[grid_x, grid_y, grid_z],
     )
 
 
@@ -630,3 +806,210 @@ def selection_enforce_particle_velocity_cylinder(
         velocity_modifier.mask[p] = 1
     else:
         velocity_modifier.mask[p] = 0
+
+
+@wp.kernel
+def compute_position_l2_loss(
+    mpm_state: MPMStateStruct,
+    gt_pos: wp.array(dtype=wp.vec3),
+    loss: wp.array(dtype=float),
+):
+    tid = wp.tid()
+
+    pos = mpm_state.particle_x[tid]
+    pos_gt = gt_pos[tid]
+
+    # l1_diff = wp.abs(pos - pos_gt)
+    l2 = wp.length(pos - pos_gt)
+
+    wp.atomic_add(loss, 0, l2)
+
+
+@wp.kernel
+def aggregate_grad(x: wp.array(dtype=float), grad: wp.array(dtype=float)):
+    tid = wp.tid()
+
+    # gradient descent step
+    wp.atomic_add(x, 0, grad[tid])
+
+
+@wp.kernel
+def set_F_C_p2g(
+    state: MPMStateStruct, model: MPMModelStruct, target_pos: wp.array(dtype=wp.vec3)
+):
+    p = wp.tid()
+    if state.particle_selection[p] == 0:
+        grid_pos = state.particle_x[p] * model.inv_dx
+        base_pos_x = wp.int(grid_pos[0] - 0.5)
+        base_pos_y = wp.int(grid_pos[1] - 0.5)
+        base_pos_z = wp.int(grid_pos[2] - 0.5)
+        fx = grid_pos - wp.vec3(
+            wp.float(base_pos_x), wp.float(base_pos_y), wp.float(base_pos_z)
+        )
+        wa = wp.vec3(1.5) - fx
+        wb = fx - wp.vec3(1.0)
+        wc = fx - wp.vec3(0.5)
+        w = wp.mat33(
+            wp.cw_mul(wa, wa) * 0.5,
+            wp.vec3(0.0, 0.0, 0.0) - wp.cw_mul(wb, wb) + wp.vec3(0.75),
+            wp.cw_mul(wc, wc) * 0.5,
+        )
+        # p2g for displacement
+        particle_disp = target_pos[p] - state.particle_x[p]
+        for i in range(0, 3):
+            for j in range(0, 3):
+                for k in range(0, 3):
+                    ix = base_pos_x + i
+                    iy = base_pos_y + j
+                    iz = base_pos_z + k
+                    weight = w[0, i] * w[1, j] * w[2, k]  # tricubic interpolation
+                    v_in_add = weight * state.particle_mass[p] * particle_disp
+                    wp.atomic_add(state.grid_v_in, ix, iy, iz, v_in_add)
+                    wp.atomic_add(
+                        state.grid_m, ix, iy, iz, weight * state.particle_mass[p]
+                    )
+
+
+@wp.kernel
+def set_F_C_g2p(state: MPMStateStruct, model: MPMModelStruct):
+    p = wp.tid()
+    if state.particle_selection[p] == 0:
+        grid_pos = state.particle_x[p] * model.inv_dx
+        base_pos_x = wp.int(grid_pos[0] - 0.5)
+        base_pos_y = wp.int(grid_pos[1] - 0.5)
+        base_pos_z = wp.int(grid_pos[2] - 0.5)
+        fx = grid_pos - wp.vec3(
+            wp.float(base_pos_x), wp.float(base_pos_y), wp.float(base_pos_z)
+        )
+        wa = wp.vec3(1.5) - fx
+        wb = fx - wp.vec3(1.0)
+        wc = fx - wp.vec3(0.5)
+        w = wp.mat33(
+            wp.cw_mul(wa, wa) * 0.5,
+            wp.vec3(0.0, 0.0, 0.0) - wp.cw_mul(wb, wb) + wp.vec3(0.75),
+            wp.cw_mul(wc, wc) * 0.5,
+        )
+        dw = wp.mat33(fx - wp.vec3(1.5), -2.0 * (fx - wp.vec3(1.0)), fx - wp.vec3(0.5))
+        new_C = wp.mat33(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        new_F = wp.mat33(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+        # g2p for C and F
+        for i in range(0, 3):
+            for j in range(0, 3):
+                for k in range(0, 3):
+                    ix = base_pos_x + i
+                    iy = base_pos_y + j
+                    iz = base_pos_z + k
+                    dpos = wp.vec3(wp.float(i), wp.float(j), wp.float(k)) - fx
+                    weight = w[0, i] * w[1, j] * w[2, k]  # tricubic interpolation
+                    grid_v = state.grid_v_out[ix, iy, iz]
+                    new_C = new_C + wp.outer(grid_v, dpos) * (
+                        weight * model.inv_dx * 4.0
+                    )
+                    dweight = compute_dweight(model, w, dw, i, j, k)
+                    new_F = new_F + wp.outer(grid_v, dweight)
+
+        # C should still be zero..
+        # state.particle_C[p] = new_C
+        I33 = wp.mat33(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
+        F_tmp = I33 + new_F
+        state.particle_F_trial[p] = F_tmp
+
+        if model.update_cov_with_F:
+            update_cov(state, p, new_F, 1.0)
+
+
+@wp.kernel
+def compute_posloss_with_grad(
+    mpm_state: MPMStateStruct,
+    gt_pos: wp.array(dtype=wp.vec3),
+    grad: wp.array(dtype=wp.vec3),
+    dt: float,
+    loss: wp.array(dtype=float),
+):
+    tid = wp.tid()
+
+    pos = mpm_state.particle_x[tid]
+    pos_gt = gt_pos[tid]
+
+    # l1_diff = wp.abs(pos - pos_gt)
+    # l2 = wp.length(pos - (pos_gt - grad[tid] * dt))
+    diff = pos - (pos_gt - grad[tid] * dt)
+    l2 = wp.dot(diff, diff)
+    wp.atomic_add(loss, 0, l2)
+
+
+@wp.kernel
+def compute_veloloss_with_grad(
+    mpm_state: MPMStateStruct,
+    gt_pos: wp.array(dtype=wp.vec3),
+    grad: wp.array(dtype=wp.vec3),
+    dt: float,
+    loss: wp.array(dtype=float),
+):
+    tid = wp.tid()
+
+    pos = mpm_state.particle_v[tid]
+    pos_gt = gt_pos[tid]
+
+    # l1_diff = wp.abs(pos - pos_gt)
+    # l2 = wp.length(pos - (pos_gt - grad[tid] * dt))
+
+    diff = pos - (pos_gt - grad[tid] * dt)
+    l2 = wp.dot(diff, diff)
+    wp.atomic_add(loss, 0, l2)
+
+
+@wp.kernel
+def compute_Floss_with_grad(
+    mpm_state: MPMStateStruct,
+    gt_mat: wp.array(dtype=wp.mat33),
+    grad: wp.array(dtype=wp.mat33),
+    dt: float,
+    loss: wp.array(dtype=float),
+):
+    tid = wp.tid()
+
+    mat_ = mpm_state.particle_F_trial[tid]
+    mat_gt = gt_mat[tid]
+
+    mat_gt = mat_gt - grad[tid] * dt
+    # l1_diff = wp.abs(pos - pos_gt)
+    mat_diff = mat_ - mat_gt
+
+    l2 = wp.ddot(mat_diff, mat_diff)
+    # l2 = wp.sqrt(
+    #     mat_diff[0, 0] ** 2.0
+    #     + mat_diff[0, 1] ** 2.0
+    #     + mat_diff[0, 2] ** 2.0
+    #     + mat_diff[1, 0] ** 2.0
+    #     + mat_diff[1, 1] ** 2.0
+    #     + mat_diff[1, 2] ** 2.0
+    #     + mat_diff[2, 0] ** 2.0
+    #     + mat_diff[2, 1] ** 2.0
+    #     + mat_diff[2, 2] ** 2.0
+    # )
+
+    wp.atomic_add(loss, 0, l2)
+
+
+@wp.kernel
+def compute_Closs_with_grad(
+    mpm_state: MPMStateStruct,
+    gt_mat: wp.array(dtype=wp.mat33),
+    grad: wp.array(dtype=wp.mat33),
+    dt: float,
+    loss: wp.array(dtype=float),
+):
+    tid = wp.tid()
+
+    mat_ = mpm_state.particle_C[tid]
+    mat_gt = gt_mat[tid]
+
+    mat_gt = mat_gt - grad[tid] * dt
+    # l1_diff = wp.abs(pos - pos_gt)
+
+    mat_diff = mat_ - mat_gt
+    l2 = wp.ddot(mat_diff, mat_diff)
+
+    wp.atomic_add(loss, 0, l2)
