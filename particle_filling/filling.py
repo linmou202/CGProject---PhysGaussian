@@ -633,7 +633,21 @@ def DBSCAN_cluster(
     noise_attach_radius=DBSCAN_NOISE_ATTACH_RADIUS,
 ):
     """Cluster Gaussian kernels into object-level subsets."""
+    named_inputs = {
+        "pos": pos,
+        "opacity": opacity,
+        "cov": cov,
+        "screen_points": screen_points,
+        "shs": shs,
+    }
+    missing = [name for name, value in named_inputs.items() if value is None]
+    if missing:
+        raise ValueError(f"DBSCAN_cluster inputs cannot be None: {', '.join(missing)}")
+
     pos_np = _to_numpy(pos).reshape(-1, 3).astype(np.float64)
+    if pos_np.shape[0] == 0:
+        raise ValueError("DBSCAN_cluster requires at least one Gaussian point.")
+
     labels = _dbscan_labels(pos_np, eps=eps, min_samples=min_samples)
     cluster_indices = _labels_to_cluster_indices(
         labels,
@@ -753,57 +767,64 @@ def fill_particles(
     boundary: list = None,
     smooth: bool = False,
     method: str = "legacy",
-    interior_num: int = None,
-    sample_num: int = None,
-    sample_ratio: float = None,
+    mcis_sample_ratio: float = None,
     mcis_sigma: float = MCIS_SIGMA,
+    **kwargs,
 ):
+    legacy_sample_ratio = kwargs.pop("sample_ratio", None)
+    if kwargs:
+        unknown = ", ".join(sorted(kwargs.keys()))
+        raise TypeError(f"Unexpected fill_particles arguments: {unknown}")
+    if mcis_sample_ratio is None:
+        mcis_sample_ratio = legacy_sample_ratio
+
     method = (method or "legacy").lower()
     normalized_method = normalize_filling_method(method)
     if normalized_method == "mcis":
         particle_budget = max(0, int(max_samples))
-        if interior_num is None:
-            active_pos = pos
-            active_cov = cov
-            if boundary is not None:
-                assert len(boundary) == 6
-                mask = torch.ones(pos.shape[0], dtype=torch.bool, device=pos.device)
-                for i in range(3):
-                    mask = torch.logical_and(mask, pos[:, i] > boundary[2 * i])
-                    mask = torch.logical_and(mask, pos[:, i] < boundary[2 * i + 1])
-                active_pos = pos[mask]
-                active_cov = cov[mask]
+        if mcis_sample_ratio is None:
+            mcis_sample_ratio = 0.05
 
-            if active_pos.shape[0] < 4:
-                return pos.clone()
+        active_pos = pos
+        active_cov = cov
+        if boundary is not None:
+            assert len(boundary) == 6
+            mask = torch.ones(pos.shape[0], dtype=torch.bool, device=pos.device)
+            for i in range(3):
+                mask = torch.logical_and(mask, pos[:, i] > boundary[2 * i])
+                mask = torch.logical_and(mask, pos[:, i] < boundary[2 * i + 1])
+            active_pos = pos[mask]
+            active_cov = cov[mask]
 
-            active_pos_np = _to_numpy(active_pos).reshape(-1, 3).astype(np.float64)
-            active_cov_np = _to_numpy(active_cov)
-            coords_ldb, coords_ruf, _ = _compute_aabb(
-                active_pos_np,
-                active_cov_np,
-                min_padding=max(float(grid_dx), 0.01),
-            )
-            extent = np.maximum(coords_ruf - coords_ldb, 0.0)
-            aabb_volume = float(np.prod(extent))
-            cell_volume = max(float(grid_dx) ** 3, 1e-12)
-            cell_count = max(1, int(np.ceil(aabb_volume / cell_volume)))
-            interior_num = min(
-                MCIS_MAX_CANDIDATES,
-                cell_count * max(0, int(max_particles_per_cell)),
-            )
-        else:
-            interior_num = min(MCIS_MAX_CANDIDATES, max(0, int(interior_num)))
+        if active_pos.shape[0] < 4:
+            return pos.clone()
 
-        if sample_num is None:
-            if sample_ratio is None:
-                sample_ratio = 0.05
-            sample_num = int(np.ceil(interior_num * max(0.0, float(sample_ratio))))
-        else:
-            sample_num = int(sample_num)
+        active_pos_np = _to_numpy(active_pos).reshape(-1, 3).astype(np.float64)
+        active_cov_np = _to_numpy(active_cov)
+        coords_ldb, coords_ruf, _ = _compute_aabb(
+            active_pos_np,
+            active_cov_np,
+            min_padding=max(float(grid_dx), 0.01),
+        )
+        extent = np.maximum(coords_ruf - coords_ldb, 0.0)
+        aabb_volume = float(np.prod(extent))
+        cell_volume = max(float(grid_dx) ** 3, 1e-12)
+        cell_count = max(1, int(np.ceil(aabb_volume / cell_volume)))
+        candidate_floor = active_pos.shape[0] * max(1, int(max_particles_per_cell))
+        mcis_interior_num = min(
+            MCIS_MAX_CANDIDATES,
+            max(cell_count * max(0, int(max_particles_per_cell)), candidate_floor),
+        )
+        mcis_sample_num = int(
+            np.ceil(mcis_interior_num * max(0.0, float(mcis_sample_ratio)))
+        )
+        mcis_sample_num = min(
+            max(0, mcis_sample_num),
+            particle_budget,
+            MCIS_MAX_SAMPLES,
+        )
 
-        sample_num = min(max(0, sample_num), particle_budget, MCIS_MAX_SAMPLES)
-        if interior_num <= 0 or sample_num <= 0:
+        if mcis_interior_num <= 0 or mcis_sample_num <= 0:
             return pos.clone()
 
         return fill_particles_MCIS(
@@ -811,8 +832,8 @@ def fill_particles(
             opacity=opacity,
             cov=cov,
             grid_n=grid_n,
-            interior_num=interior_num,
-            sample_num=sample_num,
+            interior_num=mcis_interior_num,
+            sample_num=mcis_sample_num,
             grid_dx=grid_dx,
             search_thres=search_thres,
             boundary=boundary,
