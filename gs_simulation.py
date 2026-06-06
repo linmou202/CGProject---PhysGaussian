@@ -216,24 +216,25 @@ if __name__ == "__main__":
     # ensure the data is correctly generated
     # assert num_items == cls_E.shape[0]
 
-    if cls_filling_method is None or filling_params.get("use_vlm", False):
-        filling_methods = resolve_filling_methods(
-            filling_params.get("methods", None),
-            filling_params.get("method", "legacy"),
-            len(cls_pos),
-        )
-    
-    cluster_sizes = [int(size.item()) for size in cls_size]
-    cluster_budgets = allocate_filling_budgets(
-        cluster_sizes,
-        filling_params["max_particles_num"],
-        filling_params["min_particles_num_per_object"],
-    )
-
     # FRAMEWORK_DONE: fill the items one by one
     cls_mpm_init_pos = []
     num_particles = 0
     if filling_params is not None:
+        
+        if cls_filling_method is None or filling_params.get("use_vlm", False):
+            filling_methods = resolve_filling_methods(
+                filling_params.get("methods", None),
+                filling_params.get("method", "legacy"),
+                len(cls_pos),
+            )
+        
+        cluster_sizes = [int(size.item()) for size in cls_size]
+        cluster_budgets = allocate_filling_budgets(
+            cluster_sizes,
+            filling_params["max_particles_num"],
+            filling_params["min_particles_num_per_object"],
+        )
+
         for i in range(0, num_items):
             print(str.encode(f"""Filling internal particles of item {i} ..."""))
             cls_mpm_init_pos.append(fill_particles(
@@ -250,16 +251,16 @@ if __name__ == "__main__":
                 ray_cast_dir=filling_params["ray_cast_direction"],
                 boundary=filling_params["boundary"],
                 smooth=filling_params["smooth"],
-                method=cls_filling_method[i],
-                sample_ratio=filling_params.get("mcis_sample_ratio", None),
-                mcis_sigma=filling_params.get("mcis_sigma", 0.02),
+                # method=cls_filling_method[i],
+                # sample_ratio=filling_params.get("mcis_sample_ratio", None),
+                # mcis_sigma=filling_params.get("mcis_sigma", 0.02),
             ).to(device=device))
 
             cluster_index[2*i] = num_particles
             cluster_index[2*i + 1] = num_particles + cluster_index[2*i + 1]
             num_particles += cls_mpm_init_pos[i].shape[0]
         
-        cls_mpm_init_pos.append(transformed_pos[num_items].to(device=device))
+        cls_mpm_init_pos.append(cls_pos[num_items].to(device=device))
         cluster_index.append(num_particles)
         num_particles += cls_mpm_init_pos[num_items].shape[0]
         cluster_index.append(num_particles)
@@ -269,18 +270,15 @@ if __name__ == "__main__":
         
     else:
         for i in range(0, num_items+1):
-            cls_mpm_init_pos.append(transformed_pos[i].to(device=device))
+            cls_mpm_init_pos.append(cls_pos[i].to(device=device))
 
             cluster_index[2*i] = num_particles
             cluster_index[2*i + 1] = num_particles + cluster_index[2*i + 1]
             num_particles += cls_mpm_init_pos[i].shape[0]
 
-    # FRAMEWORK_DONE: concat the position list
-    mpm_init_pos = torch.cat(cls_mpm_init_pos, dim=0)
-
     # FRAMEWORK_DONE: concat the tensor in the lists after initializing them
-    # init the mpm parameters
-    print("Initializing MPM solver and setting up boundary conditions...")
+    # init the mpm inputs
+    mpm_init_pos = torch.cat(cls_mpm_init_pos, dim=0)
 
     if filling_params is not None and filling_params["visualize"] == True:
         for i in range(0, num_items):
@@ -296,13 +294,13 @@ if __name__ == "__main__":
         shs = torch.cat(cls_shs, dim=0)
         gs_num = num_particles
     else:
-        mpm_init_cov = torch.zeros((mpm_init_pos.shape[0], 6), device=device)
-        shs = torch.zeros((mpm_init_pos.shape[0], init_shs.shape[1]), device=device)
-        opacity = torch.zeros((mpm_init_pos.shape[0]), device=device)
+        mpm_init_cov = torch.zeros((mpm_init_pos.shape[0], *init_cov.shape[1:]), device=device)
+        shs = torch.zeros((mpm_init_pos.shape[0], *init_shs.shape[1:]), device=device)
+        opacity = torch.zeros((mpm_init_pos.shape[0], *init_opacity.shape[1:]), device=device)
 
         for i in range(0, num_items+1):
             mpm_init_cov[cluster_index[2*i]:cluster_index[2*i + 1]] = cls_cov[i]
-            shs[cluster_index[2*i]:cluster_index[2*i + 1]] = cls_cov[i]
+            shs[cluster_index[2*i]:cluster_index[2*i + 1]] = cls_shs[i]
             opacity[cluster_index[2*i]:cluster_index[2*i + 1]] = cls_opacity[i]
         
         gs_num = num_particles
