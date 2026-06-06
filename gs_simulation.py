@@ -209,9 +209,124 @@ if __name__ == "__main__":
         cluster_index.append(cls_pos[i].shape[0])
 
     # PART2_TODO: add and change some code here to cooperate with function "generate_bounded_image".
-    generate_bounded_image('bounded_image')
-    call_vlm('bounded_image','generated_data')
-    cls_E, cls_filling_method = get_initial_params('generated_data')
+    mpm_space_viewpoint_center = (
+        torch.tensor(camera_params["mpm_space_viewpoint_center"]).reshape((1, 3)).cuda()
+    )
+    mpm_space_vertical_upward_axis = (
+        torch.tensor(camera_params["mpm_space_vertical_upward_axis"])
+        .reshape((1, 3))
+        .cuda()
+    )
+    (
+        viewpoint_center_worldspace,
+        observant_coordinates,
+    ) = get_center_view_worldspace_and_observant_coordinate(
+        mpm_space_viewpoint_center,
+        mpm_space_vertical_upward_axis,
+        rotation_matrices,
+        scale_origin,
+        original_mean_pos,
+    )
+    vlm_camera = get_camera_view(
+        model_path,
+        default_camera_index=camera_params["default_camera_index"],
+        center_view_world_space=viewpoint_center_worldspace,
+        observant_coordinates=observant_coordinates,
+        show_hint=False,
+        init_azimuthm=camera_params["init_azimuthm"],
+        init_elevation=camera_params["init_elevation"],
+        init_radius=camera_params["init_radius"],
+        move_camera=False,
+        current_frame=0,
+        delta_a=camera_params["delta_a"],
+        delta_e=camera_params["delta_e"],
+        delta_r=camera_params["delta_r"],
+    )
+    vlm_rasterize = initialize_resterize(vlm_camera, gaussians, pipeline, background)
+    vlm_render_pos = apply_inverse_rotations(
+        undotransform2origin(
+            undoshift2center111(transformed_pos), scale_origin, original_mean_pos
+        ),
+        rotation_matrices,
+    )
+    vlm_render_cov = init_cov / (scale_origin * scale_origin)
+    vlm_render_cov = apply_inverse_cov_rotations(vlm_render_cov, rotation_matrices)
+    vlm_render_opacity = init_opacity
+    vlm_render_shs = init_shs
+    vlm_colors = convert_SH(vlm_render_shs, vlm_camera, gaussians, vlm_render_pos)
+    vlm_means2d = torch.zeros_like(
+        vlm_render_pos, dtype=vlm_render_pos.dtype, requires_grad=True, device="cuda"
+    )
+    vlm_rendering, _ = vlm_rasterize(
+        means3D=vlm_render_pos,
+        means2D=vlm_means2d,
+        shs=None,
+        colors_precomp=vlm_colors,
+        opacities=vlm_render_opacity,
+        scales=None,
+        rotations=None,
+        cov3D_precomp=vlm_render_cov,
+    )
+    vlm_image = vlm_rendering.permute(1, 2, 0).detach().cpu().numpy()
+    vlm_image = cv2.cvtColor(vlm_image, cv2.COLOR_RGB2BGR)
+    vlm_image = np.clip(vlm_image * 255.0, 0, 255).astype(np.uint8)
+
+    world_clusters = [
+        apply_inverse_rotations(
+            undotransform2origin(
+                undoshift2center111(cls_pos[i]), scale_origin, original_mean_pos
+            ),
+            rotation_matrices,
+        )
+        for i in range(num_items)
+    ]
+    vlm_boxes = []
+    image_width = int(vlm_camera.image_width)
+    image_height = int(vlm_camera.image_height)
+    for i, cluster in enumerate(world_clusters):
+        if cluster.shape[0] == 0:
+            continue
+        ones = torch.ones((cluster.shape[0], 1), device=cluster.device, dtype=cluster.dtype)
+        hom_points = torch.cat([cluster[:, :3], ones], dim=1)
+        clip_points = hom_points @ vlm_camera.full_proj_transform
+        w = clip_points[:, 3:4]
+        valid = torch.isfinite(clip_points).all(dim=1) & (torch.abs(w[:, 0]) > 1e-7)
+        if not torch.any(valid):
+            continue
+        ndc = clip_points[valid, :3] / w[valid]
+        ndc = ndc[ndc[:, 2] >= 0]
+        if ndc.shape[0] == 0:
+            continue
+        x = (ndc[:, 0] + 1.0) * 0.5 * (image_width - 1)
+        y = (1.0 - ndc[:, 1]) * 0.5 * (image_height - 1)
+        xy = torch.stack([x, y], dim=1).detach().cpu().numpy()
+        finite_mask = np.isfinite(xy).all(axis=1)
+        xy = xy[finite_mask]
+        if xy.shape[0] == 0:
+            continue
+        lower = np.min(xy, axis=0) - 8
+        upper = np.max(xy, axis=0) + 8
+        vlm_boxes.append(
+            {
+                "label": i,
+                "left_bottom": lower.tolist(),
+                "right_top": upper.tolist(),
+            }
+        )
+    config_stem = os.path.splitext(os.path.basename(args.config))[0]
+    vlm_name = config_stem[:-7] if config_stem.endswith("_config") else config_stem
+    bounded_image_path = os.path.join(
+        "generated_data", "bounded_image", f"{vlm_name}_bounded.png"
+    )
+    generate_bounded_image(
+        vlm_image,
+        vlm_boxes,
+        output_path=bounded_image_path,
+        coordinate_origin="top_left",
+    )
+    print(f"Generated bounded image: {bounded_image_path}")
+    call_vlm(bounded_image_path, os.path.join("generated_data", "vlm_data", f"{vlm_name}.json"))
+    cls_E, cls_filling_method = get_initial_params(vlm_name)
 
     # ensure the data is correctly generated
     # assert num_items == cls_E.shape[0]
