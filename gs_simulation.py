@@ -435,7 +435,7 @@ if __name__ == "__main__":
             cov3D = cov3D.view(-1, 6)[original_mask].to(device)
             rot = rot.view(-1, 3, 3)[original_mask].to(device)
 
-            cv2_img = stage_renderer.render_image_from_gaussian(pos, cov3D, opacity_render, shs_render, rot)
+            cv2_img = stage_renderer.render_image_from_gaussian(pos, cov3D, opacity_render[original_mask], shs_render[original_mask], rot)
 
             if height is None or width is None:
                 height = cv2_img.shape[0] // 2 * 2
