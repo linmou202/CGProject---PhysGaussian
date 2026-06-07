@@ -4,7 +4,7 @@
     "rotation_axis": [],
     "substep_dt": 1e-4,
     "frame_dt": 2e-2,
-    "frame_num": 300,
+    "frame_num": 100,
     "E": 1e4,
     "nu": 0.3,
     "n_grid": 100,

@@ -271,6 +271,9 @@ if __name__ == "__main__":
             particle_position_tensor_list_to_ply(cls_mpm_init_pos, "./log/filled_particles.ply")
         
     else:
+        # create index space for the non-clustered points
+        cluster_index.append(None)
+        cluster_index.append(None)
         for i in range(0, num_items+1):
             cls_mpm_init_pos.append(cls_pos[i].to(device=device))
 
@@ -282,14 +285,18 @@ if __name__ == "__main__":
     # init the mpm inputs
     mpm_init_pos = torch.cat(cls_mpm_init_pos, dim=0)
 
-    # build inverted index
+    # build inverted index and filling mask
     inverted_index = torch.zeros((mpm_init_pos.shape[0]), dtype=torch.int8, device=device)
-    filling_mask = torch.zeros()
+    original_mask = torch.zeros((mpm_init_pos.shape[0]), dtype=torch.bool)
     current_item = 0
     for i in range(0, gs_num):
-        if (current_item < num_items and i >= cluster_index[current_item*2]):
+        while (current_item < num_items and i >= cluster_index[current_item*2]):
             current_item = current_item + 1
         inverted_index[i] = current_item
+        if current_item % 2 == 0:
+            original_mask[i] = True
+        else:
+            original_mask[i] = False
 
     if filling_params is not None and filling_params["visualize"] == True:
         for i in range(0, num_items):
@@ -426,7 +433,8 @@ if __name__ == "__main__":
     height = None
     width = None
     for frame in tqdm(range(frame_num)):
-        stage_renderer.set_rasterizer(frame)
+        if (camera_params["move_camera"]):
+            stage_renderer.set_rasterizer(frame)
 
         for step in range(step_per_frame):
             mpm_solver.p2g2p(frame, substep_dt, device=device)
@@ -441,14 +449,13 @@ if __name__ == "__main__":
             )
 
         if args.render_img:
-            pos = mpm_solver.export_particle_x_to_torch()[:gs_num].to(device)
+            pos = mpm_solver.export_particle_x_to_torch()[original_mask].to(device)
             cov3D = mpm_solver.export_particle_cov_to_torch()
             rot = mpm_solver.export_particle_R_to_torch()
-            cov3D = cov3D.view(-1, 6)[:gs_num].to(device)
-            rot = rot.view(-1, 3, 3)[:gs_num].to(device)
+            cov3D = cov3D.view(-1, 6)[original_mask].to(device)
+            rot = rot.view(-1, 3, 3)[original_mask].to(device)
 
             cv2_img = stage_renderer.render_image_from_gaussian(pos, cov3D, opacity_render, shs_render, rot)
-            
             if height is None or width is None:
                 height = cv2_img.shape[0] // 2 * 2
                 width = cv2_img.shape[1] // 2 * 2
