@@ -288,9 +288,10 @@ if __name__ == "__main__":
     original_mask = torch.zeros((mpm_init_pos.shape[0]), dtype=torch.bool)
     is_filled = False
     current_section = 0
-    for i in range(0, gs_num):
+    for i in range(0, num_particles):
         while (current_section < (2*num_items + 1) and i >= cluster_index[current_section + 1]):
             current_section = current_section + 1
+            print(str.encode(f"""building mask for section {current_section}"""))
         inverted_index[i] = current_section // 2
         if current_section % 2 == 0:
             original_mask[i] = True
