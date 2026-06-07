@@ -10,11 +10,6 @@ from typing import List
 
 import point_cloud_utils as pcu
 
-from accelerate.utils import ProjectConfiguration
-from accelerate.logging import get_logger
-from accelerate.utils import set_seed
-from accelerate import Accelerator, DistributedDataParallelKwargs
-
 import numpy as np
 import logging
 import argparse
@@ -51,56 +46,6 @@ from utils.interface import (
 from utils.render_utils import *
 from utils.train_utils import Young_Moudulous_Map
 
-logger = get_logger(__name__, log_level="INFO")
-
-model_dict = {
-    # psnr: 29.9
-    # "videos": "../../output/inverse_sim/fast_hat_velopretraindecay_1.0_substep_96_se3_field_lr_0.001_tv_0.01_iters_300_sw_2_cw_2/seed0/checkpoint_model_000299",
-    # psnr: 30.25
-    "videos": "../../output/inverse_sim/fast_hat_velopretrain_g48-192decay_1.0_substep_192_se3_field_lr_0.003_tv_0.01_iters_300_sw_2_cw_2/seed0/checkpoint_model_000199",
-    # psnr: 30.52
-    "videos_2": "../../output/inverse_sim/fast_hat_videos2_velopretraindecay_1.0_substep_96_se3_field_lr_0.003_tv_0.01_iters_300_sw_2_cw_2/seed0/checkpoint_model_000199",
-}
-
-
-def create_dataset(args):
-    assert args.dataset_res in ["middle", "small", "large"]
-    if args.dataset_res == "middle":
-        res = [320, 576]
-    elif args.dataset_res == "small":
-        res = [192, 320]
-    elif args.dataset_res == "large":
-        res = [576, 1024]
-    else:
-        raise NotImplementedError
-
-    video_dir_name = "videos"
-    video_dir_name = args.video_dir_name
-
-    if args.test_convergence:
-        video_dir_name = "simulated_videos"
-    dataset = MultiviewVideoDataset(
-        args.dataset_dir,
-        use_white_background=False,
-        resolution=res,
-        scale_x_angle=1.0,
-        video_dir_name=video_dir_name,
-    )
-
-    test_dataset = MultiviewImageDataset(
-        args.dataset_dir,
-        use_white_background=False,
-        resolution=res,
-        # use_index=list(range(0, 30, 4)),
-        # use_index=[0],
-        scale_x_angle=1.0,
-        fitler_with_renderd=False,
-        load_imgs=False,
-    )
-    print("len of test dataset", len(test_dataset))
-    return dataset, test_dataset
-
-
 class Trainer:
     def __init__(self, args):
         self.args = args
@@ -109,54 +54,7 @@ class Trainer:
         args.warmup_step = int(args.warmup_step * args.gradient_accumulation_steps)
         args.train_iters = int(args.train_iters * args.gradient_accumulation_steps)
 
-        logging_dir = os.path.join(args.output_dir, args.wandb_name)
-        accelerator_project_config = ProjectConfiguration(logging_dir=logging_dir)
-        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-        accelerator = Accelerator(
-            gradient_accumulation_steps=1,  # args.gradient_accumulation_steps,
-            mixed_precision="no",
-            log_with="wandb",
-            project_config=accelerator_project_config,
-            kwargs_handlers=[ddp_kwargs],
-        )
-        self.gradient_accumulation_steps = args.gradient_accumulation_steps
-        logging.basicConfig(
-            format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-            datefmt="%m/%d/%Y %H:%M:%S",
-            level=logging.INFO,
-        )
-        logger.info(accelerator.state, main_process_only=False)
-
-        set_seed(args.seed + accelerator.process_index)
-        print("process index", accelerator.process_index)
-        if accelerator.is_main_process:
-            output_path = os.path.join(logging_dir, f"seed{args.seed}")
-            os.makedirs(output_path, exist_ok=True)
-            self.output_path = output_path
-
-        self.rand_bg = args.rand_bg
-        # setup the dataset
-        dataset, test_dataset = create_dataset(args)
-        self.test_dataset = test_dataset
-
-        dataset_dir = test_dataset.data_dir
-        self.dataset = dataset
-
-        gaussian_path = os.path.join(dataset_dir, "point_cloud.ply")
-        aabb = self.setup_eval(
-            args,
-            gaussian_path,
-            white_background=True,
-        )
-        self.aabb = aabb
-        self.model = create_motion_model(
-            args,
-            aabb=aabb,
-            num_frames=9,
-        )
-        if args.motion_model_path is not None:
-            self.model = load_motion_model(self.model, args.motion_model_path)
-        self.model.eval()
+        # setup the gaussians
 
         self.num_frames = int(args.num_frames)
         self.window_size_schduler = LinearStepAnneal(
@@ -167,114 +65,25 @@ class Trainer:
             warmup_step=20,
         )
 
-        test_dataloader = torch.utils.data.DataLoader(
-            test_dataset,
-            batch_size=args.batch_size,
-            shuffle=False,
-            drop_last=True,
-            num_workers=0,
-            collate_fn=camera_dataset_collate_fn_img,
-        )
-        # why prepare here again?
-        test_dataloader = accelerator.prepare(test_dataloader)
-        self.test_dataloader = cycle(test_dataloader)
-
-        dataloader = torch.utils.data.DataLoader(
-            dataset,
-            batch_size=args.batch_size,
-            shuffle=False,
-            drop_last=False,
-            num_workers=0,
-            collate_fn=camera_dataset_collate_fn,
-        )
-        # why prepare here again?
-        dataloader = accelerator.prepare(dataloader)
-        self.dataloader = cycle(dataloader)
-
         self.train_iters = args.train_iters
-        self.accelerator = accelerator
+
         # init traiable params
         E_nu_list = self.init_trainable_params()
         for p in E_nu_list:
             p.requires_grad = True
         self.E_nu_list = E_nu_list
 
-        self.model = accelerator.prepare(self.model)
         self.setup_simulation(dataset_dir, grid_size=args.grid_size)
 
-        if args.checkpoint_path == "None":
-            args.checkpoint_path = None
-        if args.checkpoint_path is not None:
-
-            if args.video_dir_name in model_dict:
-                args.checkpoint_path = model_dict[args.video_dir_name]
-            self.load(args.checkpoint_path)
-            trainable_params = list(self.sim_fields.parameters()) + self.E_nu_list
-            optim_list = [
-                {"params": self.E_nu_list, "lr": args.lr * 1e-10},
-                {
-                    "params": self.sim_fields.parameters(),
-                    "lr": args.lr,
-                    "weight_decay": 1e-4,
-                },
-                # {"params": self.velo_fields.parameters(), "lr": args.lr * 1e-3, "weight_decay": 1e-4},
-            ]
-
-            if args.update_velo:
-                self.freeze_velo = False
-                velo_optim = [
-                    {
-                        "params": self.velo_fields.parameters(),
-                        "lr": args.lr * 1e-4,
-                        "weight_decay": 1e-4,
-                    },
-                ]
-                self.velo_optimizer = torch.optim.AdamW(
-                    velo_optim,
-                    lr=args.lr,
-                    weight_decay=0.0,
-                )
-                self.velo_scheduler = get_linear_schedule_with_warmup(
-                    optimizer=self.velo_optimizer,
-                    num_warmup_steps=args.warmup_step,
-                    num_training_steps=args.train_iters,
-                )
-            else:
-                self.freeze_velo = True
-                self.velo_optimizer = None
-        else:
-            trainable_params = list(self.sim_fields.parameters()) + self.E_nu_list
-            optim_list = [
-                {"params": self.E_nu_list, "lr": args.lr * 1e-10},
-                {
-                    "params": self.sim_fields.parameters(),
-                    "lr": args.lr,
-                    "weight_decay": 1e-4,
-                },
-            ]
-            self.freeze_velo = False
-            self.window_size_schduler.warmup_step = 800
-
-            velo_optim = [
-                {
-                    "params": self.velo_fields.parameters(),
-                    "lr": args.lr,
-                    "weight_decay": 1e-4,
-                },
-            ]
-            self.velo_optimizer = torch.optim.AdamW(
-                velo_optim,
-                lr=args.lr,
-                weight_decay=0.0,
-            )
-            self.velo_scheduler = get_linear_schedule_with_warmup(
-                optimizer=self.velo_optimizer,
-                num_warmup_steps=args.warmup_step,
-                num_training_steps=args.train_iters // 3,
-            )
-            self.velo_optimizer, self.velo_scheduler = accelerator.prepare(
-                self.velo_optimizer, self.velo_scheduler
-            )
+        trainable_params = list(self.sim_fields.parameters()) + self.E_nu_list
+        optim_list = [
+            {"params": self.E_nu_list, "lr": args.lr * 1e-10},
+            {
+                "params": self.sim_fields.parameters(),
+                "lr": args.lr,
+                "weight_decay": 1e-4,
+            },
+        ]
 
         self.optimizer = torch.optim.AdamW(
             optim_list,
@@ -290,7 +99,6 @@ class Trainer:
         self.sim_fields, self.optimizer, self.scheduler = accelerator.prepare(
             self.sim_fields, self.optimizer, self.scheduler
         )
-        self.velo_fields = accelerator.prepare(self.velo_fields)
 
         # setup train info
         self.step = 0
@@ -300,24 +108,6 @@ class Trainer:
         self.log_iters = args.log_iters
         self.wandb_iters = args.wandb_iters
         self.max_grad_norm = args.max_grad_norm
-
-        self.use_wandb = args.use_wandb
-        if self.accelerator.is_main_process:
-            if args.use_wandb:
-                run = wandb.init(
-                    config=dict(args),
-                    dir=self.output_path,
-                    **{
-                        "mode": "online",
-                        "entity": args.wandb_entity,
-                        "project": args.wandb_project,
-                    },
-                )
-                wandb.run.log_code(".")
-                wandb.run.name = args.wandb_name
-                print(f"run dir: {run.dir}")
-                self.wandb_folder = run.dir
-                os.makedirs(self.wandb_folder, exist_ok=True)
 
     def init_trainable_params(
         self,
@@ -355,11 +145,9 @@ class Trainer:
         device = "cuda:{}".format(self.accelerator.process_index)
 
         xyzs = self.render_params.gaussians.get_xyz.detach().clone()
-        sim_xyzs = xyzs[self.sim_mask_in_raw_gaussian, :]
+        sim_xyzs = xyzs
         sim_cov = (
-            self.render_params.gaussians.get_covariance()[
-                self.sim_mask_in_raw_gaussian, :
-            ]
+            self.render_params.gaussians.get_covariance()
             .detach()
             .clone()
         )
@@ -425,9 +213,7 @@ class Trainer:
         num_cluster = int(sim_xyzs.shape[0] * downsample_scale)
         sim_xyzs = downsample_with_kmeans_gpu(sim_xyzs, num_cluster)
 
-        sim_gaussian_pos = self.render_params.gaussians.get_xyz.detach().clone()[
-            self.sim_mask_in_raw_gaussian, :
-        ]
+        sim_gaussian_pos = self.render_params.gaussians.get_xyz.detach().clone()
         sim_gaussian_pos = (sim_gaussian_pos + shift) / scale
 
         cdist = torch.cdist(sim_gaussian_pos, sim_xyzs) * -1.0
@@ -567,13 +353,6 @@ class Trainer:
         self.sim_fields = create_spatial_fields(self.args, 1, sim_aabb)
         self.sim_fields.train()
 
-        self.args.sim_res = 24
-        # self.velo_fields = create_velocity_model(self.args, sim_aabb)
-        self.velo_fields = create_spatial_fields(
-            self.args, 3, sim_aabb, add_entropy=False
-        )
-        self.velo_fields.train()
-
     def get_simulation_input(self, device):
         """
         Outs: All padded
@@ -589,9 +368,6 @@ class Trainer:
 
         query_mask = torch.logical_not(self.freeze_mask)
         query_pts = initial_position_time0[query_mask, :]
-
-        # velocity = self.velo_fields(torch.cat([query_pts, time_array.unsqueeze(-1)], dim=-1))[..., :3]
-        velocity = self.velo_fields(query_pts)[..., :3]
 
         # scaling
         velocity = velocity * 0.1  # not padded yet
@@ -650,33 +426,12 @@ class Trainer:
     def train_one_step(self):
 
         self.sim_fields.train()
-        self.velo_fields.train()
-        self.model.eval()
-        accelerator = self.accelerator
-        device = "cuda:{}".format(accelerator.process_index)
-        data = next(self.dataloader)
+        device = "cuda:{}".format(accelerator.process_index) #TODO: please pass device as input
         cam = data["cam"][0]
 
         gt_videos = data["video_clip"][0, 1 : self.num_frames, ...]
 
         window_size = int(self.window_size_schduler.compute_state(self.step)[0])
-        stop_velo_opt_thres = 15
-        do_velo_opt = not self.freeze_velo
-        if not do_velo_opt:
-            stop_velo_opt_thres = (
-                0  # stop velocity optimization if we are loading from checkpoint
-            )
-            self.velo_fields.eval()
-
-        rendered_video_list = []
-        log_loss_dict = {
-            "loss": [],
-            "l2_loss": [],
-            "psnr": [],
-            "ssim": [],
-            "entropy": [],
-        }
-        log_psnr_dict = {}
 
         particle_pos = self.particle_init_position.clone()
         # clean grid, stress, F, C and rest initial position
@@ -701,11 +456,6 @@ class Trainer:
         ) = self.get_simulation_input(device)
 
         init_velo_mean = particle_velo[query_mask, :].mean().item()
-        init_velo_max = particle_velo[query_mask, :].max().item()
-
-        if not do_velo_opt:
-            particle_velo = particle_velo.detach()
-        # print("does do velo opt": do_velo_opt)
 
         num_particles = particle_pos.shape[0]
 
@@ -797,29 +547,17 @@ class Trainer:
                 undeformed_gaussian_pos.detach(),
                 self.top_k_index,
                 [disp_offset],
-                self.sim_mask_in_raw_gaussian,
+                self.sim_mask_in_raw_gaussian, # since we don't take out the far points, please change this to torch.ones/zeros_like...
             )
 
             # print("debug", simulated_video.shape, gt_frame.shape, gaussian_pos.shape, init_xyzs.shape, density.shape, query_mask.sum().item())
-            rendered_video_list.append(simulated_video.detach())
 
             l2_loss = 0.5 * F.mse_loss(simulated_video, gt_frame, reduction="mean")
             ssim_loss = compute_ssim(simulated_video, gt_frame)
             loss = l2_loss * (1.0 - self.ssim) + (1.0 - ssim_loss) * self.ssim
 
             loss = loss * (self.args.loss_decay**end_time_idx)
-            sm_velo_loss = self.velo_fields.compute_smoothess_loss() * 10.0
-            if not (do_velo_opt and start_time_idx == 0):
-                sm_velo_loss = sm_velo_loss.detach()
 
-            sm_spatial_loss = self.sim_fields.compute_smoothess_loss()
-
-            sm_loss = (
-                sm_velo_loss + sm_spatial_loss
-            )  # typically 20 times larger than rendering loss
-
-            loss = loss + sm_loss * self.tv_loss_weight
-            loss = loss + entropy * self.args.entropy_reg
             loss = loss / self.args.compute_window
             loss.backward()
 
@@ -833,37 +571,12 @@ class Trainer:
                 particle_C.detach(),
             )
 
-            with torch.no_grad():
-                psnr = compute_psnr(simulated_video, gt_frame).mean()
-                log_loss_dict["loss"].append(loss.item())
-                log_loss_dict["l2_loss"].append(l2_loss.item())
-                log_loss_dict["psnr"].append(psnr.item())
-                log_loss_dict["ssim"].append(ssim_loss.item())
-                log_loss_dict["entropy"].append(entropy.item())
-
-                print(
-                    psnr.item(),
-                    end_time_idx,
-                    youngs_modulus.max().item(),
-                    density.max().item(),
-                )
-                log_psnr_dict["psnr_frame_{}".format(end_time_idx)] = psnr.item()
-                # print(psnr.item(), end_time_idx, youngs_modulus.max().item(), density.max().item())
-
         nu_grad_norm = self.E_nu_list[1].grad.norm(2).item()
         spatial_grad_norm = 0
         for p in self.sim_fields.parameters():
             if p.grad is not None:
                 spatial_grad_norm += p.grad.norm(2).item()
         velo_grad_norm = 0
-        for p in self.velo_fields.parameters():
-            if p.grad is not None:
-                velo_grad_norm += p.grad.norm(2).item()
-
-        renderd_video = torch.cat(rendered_video_list, dim=0)
-        renderd_video = torch.clamp(renderd_video, 0.0, 1.0)
-        visual_video = (renderd_video.detach().cpu().numpy() * 255.0).astype(np.uint8)
-        gt_video = (gt_videos.detach().cpu().numpy() * 255.0).astype(np.uint8)
 
         if (
             self.step % self.gradient_accumulation_steps == 0
@@ -879,25 +592,12 @@ class Trainer:
 
             self.optimizer.step()
             self.optimizer.zero_grad()
-            if do_velo_opt:
-                assert self.velo_optimizer is not None
-                torch.nn.utils.clip_grad_norm_(
-                    self.velo_fields.parameters(),
-                    self.max_grad_norm,
-                    error_if_nonfinite=False,
-                )  # error if nonfinite is false
-                self.velo_optimizer.step()
-                self.velo_optimizer.zero_grad()
-                self.velo_scheduler.step()
             with torch.no_grad():
                 self.E_nu_list[0].data.clamp_(1e-1, 1e8)
                 self.E_nu_list[1].data.clamp_(1e-2, 0.449)
+        
         self.scheduler.step()
 
-        for k, v in log_loss_dict.items():
-            log_loss_dict[k] = np.mean(v)
-
-        print(log_loss_dict)
         print(
             "nu: ",
             self.E_nu_list[1].item(),
@@ -912,101 +612,6 @@ class Trainer:
             init_velo_mean,
         )
 
-        if accelerator.is_main_process and (self.step % self.wandb_iters == 0):
-            with torch.no_grad():
-                wandb_dict = {
-                    "nu_grad_norm": nu_grad_norm,
-                    "spatial_grad_norm": spatial_grad_norm,
-                    "velo_grad_norm": velo_grad_norm,
-                    "nu": self.E_nu_list[1].item(),
-                    # "mean_density": density.mean().item(),
-                    "mean_E": youngs_modulus.mean().item(),
-                    "max_E": youngs_modulus.max().item(),
-                    "min_E": youngs_modulus.min().item(),
-                    "smoothness_loss": sm_loss.item(),
-                    "window_size": window_size,
-                    "max_particle_velo": particle_velo.max().item(),
-                    "init_velo_mean": init_velo_mean,
-                    "init_velo_max": init_velo_max,
-                }
-
-                wandb_dict.update(log_psnr_dict)
-                simulated_video = self.inference(cam, substep=num_substeps)
-                sim_video_torch = (
-                    torch.from_numpy(simulated_video).float().to(device) / 255.0
-                )
-                gt_video_torch = torch.from_numpy(gt_video).float().to(device) / 255.0
-
-                full_psnr = compute_psnr(sim_video_torch[1:], gt_video_torch)
-
-                first_psnr = full_psnr[:6].mean().item()
-                last_psnr = full_psnr[-6:].mean().item()
-                full_psnr = full_psnr.mean().item()
-                wandb_dict["full_psnr"] = full_psnr
-                wandb_dict["first_psnr"] = first_psnr
-                wandb_dict["last_psnr"] = last_psnr
-                wandb_dict.update(log_loss_dict)
-
-                # add young render
-
-                youngs_norm = youngs_modulus - youngs_modulus.min() + 1e-2
-                young_color = youngs_norm / torch.quantile(youngs_norm, 0.99)
-                young_color = torch.clamp(young_color, 0.0, 1.0)
-                young_color[self.freeze_mask] = 0.0
-                queryed_young_color = young_color[self.top_k_index]  # [n_raw, topk]
-                young_color = queryed_young_color.mean(dim=-1)
-
-                young_color_full = torch.ones_like(
-                    self.render_params.gaussians._xyz[:, 0]
-                )
-
-                young_color_full[self.sim_mask_in_raw_gaussian] = young_color
-                young_color = torch.stack(
-                    [young_color_full, young_color_full, young_color_full], dim=-1
-                )
-
-                young_img = render_feat_gaussian(
-                    cam,
-                    self.render_params.gaussians,
-                    self.render_params.render_pipe,
-                    self.render_params.bg_color,
-                    young_color,
-                )["render"]
-                young_img = (
-                    (young_img.detach().cpu().numpy() * 255.0)
-                    .astype(np.uint8)
-                    .transpose(1, 2, 0)
-                )
-                wandb_dict["young_img"] = wandb.Image(young_img)
-
-                if self.step % int(10 * self.wandb_iters) == 0:
-
-                    wandb_dict["rendered_video"] = wandb.Video(
-                        visual_video, fps=visual_video.shape[0]
-                    )
-
-                    wandb_dict["gt_video"] = wandb.Video(
-                        gt_video,
-                        fps=gt_video.shape[0],
-                    )
-
-                    wandb_dict["inference_video"] = wandb.Video(
-                        simulated_video,
-                        fps=simulated_video.shape[0],
-                    )
-
-                    simulated_video = self.inference(
-                        cam, velo_scaling=5.0, num_sec=3, substep=num_substeps
-                    )
-                    wandb_dict["inference_video_v5_t3"] = wandb.Video(
-                        simulated_video,
-                        fps=30,
-                    )
-
-                if self.use_wandb:
-                    wandb.log(wandb_dict, step=self.step)
-
-        self.accelerator.wait_for_everyone()
 
     def train(self):
         # might remove tqdm when multiple node
@@ -1018,218 +623,12 @@ class Trainer:
                     # self.test()
             # self.accelerator.wait_for_everyone()
             self.step += 1
-        if self.accelerator.is_main_process:
-            self.save()
-
-    @torch.no_grad()
-    def inference(
-        self,
-        cam,
-        velo_scaling=1.0,
-        num_sec=1,
-        nu=None,
-        young_scaling=1.0,
-        substep=64,
-        youngs_modulus=None,
-    ):
-
-        self.sim_fields.eval()
-        self.velo_fields.eval()
-
-        device = "cuda:{}".format(self.accelerator.process_index)
-
-        (
-            density,
-            youngs_modulus_,
-            poisson,
-            init_velocity,
-            query_mask,
-            particle_F,
-            particle_C,
-            entropy,
-        ) = self.get_simulation_input(device)
-
-        poisson = self.E_nu_list[1].detach().clone()  # override poisson
-
-        if youngs_modulus is None:
-            youngs_modulus = youngs_modulus_ * young_scaling
-        init_xyzs = self.particle_init_position.clone()
-
-        init_velocity[query_mask, :] = init_velocity[query_mask, :] * velo_scaling
-
-        num_particles = init_xyzs.shape[0]
-
-        # delta_time = 1.0 / (self.num_frames - 1)
-        delta_time = 1.0 / 30  # 30 fps
-        substep_size = delta_time / substep
-        num_substeps = int(delta_time / substep_size)
-        # reset state
-
-        self.mpm_state.reset_density(
-            density.clone(), query_mask, device, update_mass=True
-        )
-        self.mpm_solver.set_E_nu_from_torch(
-            self.mpm_model, youngs_modulus.clone(), poisson.clone(), device
-        )
-        self.mpm_solver.prepare_mu_lam(self.mpm_model, self.mpm_state, device)
-
-        self.mpm_state.continue_from_torch(
-            init_xyzs,
-            init_velocity,
-            particle_F,
-            particle_C,
-            device=device,
-            requires_grad=False,
-        )
-
-        pos_list = [self.particle_init_position.clone() * self.scale - self.shift]
-
-        prev_state = self.mpm_state
-        for i in tqdm(range((self.num_frames - 1) * num_sec)):
-            # for substep in range(num_substeps):
-            #     self.mpm_solver.p2g2p(self.mpm_model, self.mpm_state, substep, substep_size, device="cuda:0")
-            # pos = wp.to_torch(self.mpm_state.particle_x).clone()
-
-            for substep_local in range(num_substeps):
-                next_state = prev_state.partial_clone(requires_grad=False)
-                self.mpm_solver.p2g2p_differentiable(
-                    self.mpm_model, prev_state, next_state, substep_size, device=device
-                )
-                prev_state = next_state
-
-            pos = wp.to_torch(next_state.particle_x).clone()
-            pos = (pos * self.scale) - self.shift
-            pos_list.append(pos)
-
-        init_pos = pos_list[0].clone()
-        pos_diff_list = [_ - init_pos for _ in pos_list]
-
-        video_array = render_gaussian_seq_w_mask_with_disp(
-            cam,
-            self.render_params,
-            init_pos,
-            self.top_k_index,
-            pos_diff_list,
-            self.sim_mask_in_raw_gaussian,
-        )
-
-        video_numpy = video_array.detach().cpu().numpy() * 255
-        video_numpy = np.clip(video_numpy, 0, 255).astype(np.uint8)
-
-        return video_numpy
-
-    def save(
-        self,
-    ):
-        # training states
-        output_path = os.path.join(
-            self.output_path, f"checkpoint_model_{self.step:06d}"
-        )
-        os.makedirs(output_path, exist_ok=True)
-
-        name_list = [
-            "velo_fields",
-            "sim_fields",
-        ]
-        for i, model in enumerate(
-            [
-                self.accelerator.unwrap_model(self.velo_fields, keep_fp32_wrapper=True),
-                self.accelerator.unwrap_model(self.sim_fields, keep_fp32_wrapper=True),
-            ]
-        ):
-            model_name = name_list[i]
-            model_path = os.path.join(output_path, model_name + ".pt")
-            torch.save(model.state_dict(), model_path)
-
-    def load(self, checkpoint_dir):
-        name_list = [
-            "velo_fields",
-            "sim_fields",
-        ]
-        for i, model in enumerate([self.velo_fields, self.sim_fields]):
-            model_name = name_list[i]
-            if model_name == "sim_fields" and (not self.args.load_sim):
-                continue
-            model_path = os.path.join(checkpoint_dir, model_name + ".pt")
-            print("=> loading: ", model_path)
-            model.load_state_dict(torch.load(model_path))
-
-    def setup_eval(self, args, gaussian_path, white_background=True):
-        # setup gaussians
-        class RenderPipe(NamedTuple):
-            convert_SHs_python = False
-            compute_cov3D_python = False
-            debug = False
-
-        class RenderParams(NamedTuple):
-            render_pipe: RenderPipe
-            bg_color: bool
-            gaussians: GaussianModel
-            camera_list: list
-
-        gaussians = GaussianModel(3)
-        camera_list = self.dataset.test_camera_list
-
-        gaussians.load_ply(gaussian_path)
-        gaussians.detach_grad()
-        print(
-            "load gaussians from: {}".format(gaussian_path),
-            "... num gaussians: ",
-            gaussians._xyz.shape[0],
-        )
-        bg_color = [1, 1, 1] if white_background else [0, 0, 0]
-        background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-        render_pipe = RenderPipe()
-
-        render_params = RenderParams(
-            render_pipe=render_pipe,
-            bg_color=background,
-            gaussians=gaussians,
-            camera_list=camera_list,
-        )
-        self.render_params = render_params
-
-        # get_gaussian scene box
-        scaler = 1.1
-        points = gaussians._xyz
-
-        min_xyz = torch.min(points, dim=0)[0]
-        max_xyz = torch.max(points, dim=0)[0]
-
-        center = (min_xyz + max_xyz) / 2
-
-        scaled_min_xyz = (min_xyz - center) * scaler + center
-        scaled_max_xyz = (max_xyz - center) * scaler + center
-
-        aabb = torch.stack([scaled_min_xyz, scaled_max_xyz], dim=0)
-
-        # add filled in points
-        gaussian_dir = os.path.dirname(gaussian_path)
-
-        clean_points_path = os.path.join(gaussian_dir, "clean_object_points.ply")
-        if os.path.exists(clean_points_path):
-            clean_xyzs = pcu.load_mesh_v(clean_points_path)
-            clean_xyzs = torch.from_numpy(clean_xyzs).float().to("cuda")
-            self.clean_xyzs = clean_xyzs
-            print(
-                "loaded {} clean points from: ".format(clean_xyzs.shape[0]),
-                clean_points_path,
-            )
-            # we can use tight threshold here
-            not_sim_maks = find_far_points(
-                gaussians._xyz, clean_xyzs, thres=0.01
-            ).bool()
-            sim_mask_in_raw_gaussian = torch.logical_not(not_sim_maks)
-            # [N]
-            self.sim_mask_in_raw_gaussian = sim_mask_in_raw_gaussian
-        else:
-            self.clean_xyzs = None
-            self.sim_mask_in_raw_gaussian = torch.ones_like(gaussians._xyz[:, 0]).bool()
-
-        return aabb
 
 def setup_trainer(
     stage_renderer,
+    ssim, # the ratio between L1 loss and ssim loss
+    gradient_accumulate_steps,  # after how many backwards we step once
+
 
 ):
     # torch.backends.cuda.matmul.allow_tf32 = True

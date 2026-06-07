@@ -277,10 +277,19 @@ if __name__ == "__main__":
             cluster_index[2*i] = num_particles
             cluster_index[2*i + 1] = num_particles + cluster_index[2*i + 1]
             num_particles += cls_mpm_init_pos[i].shape[0]
-
+    
     # FRAMEWORK_DONE: concat the tensor in the lists after initializing them
     # init the mpm inputs
     mpm_init_pos = torch.cat(cls_mpm_init_pos, dim=0)
+
+    # build inverted index
+    inverted_index = torch.zeros((mpm_init_pos.shape[0]), dtype=torch.int8, device=device)
+    filling_mask = torch.zeros()
+    current_item = 0
+    for i in range(0, gs_num):
+        if (current_item < num_items and i >= cluster_index[current_item*2]):
+            current_item = current_item + 1
+        inverted_index[i] = current_item
 
     if filling_params is not None and filling_params["visualize"] == True:
         for i in range(0, num_items):
@@ -359,19 +368,24 @@ if __name__ == "__main__":
     stage_renderer.set_rasterizer(0)
 
     # FRAMEWORK_TODO: Change things below this line ----------------------------------------
-    # build inverted index
-    inverted_index = torch.zeros((mpm_init_pos.shape[0]), dtype=torch.int8, device=device)
-    current_item = 0
-    for i in range(0, gs_num):
-        if (current_item < num_items and i >= cluster_index[current_item*2]):
-            current_item = current_item + 1
-        inverted_index[i] = current_item
+    
     
     # set up the mpm solver
     print("Initializing MPM solver and setting up boundary conditions...")
 
     mpm_state = MPMStateStruct()
     mpm_state.init(gs_num, device=device, requires_grad=True)
+    mpm_state.from_torch(
+        mpm_init_pos.to(device).clone(),
+        mpm_init_vol.float().to(device).clone(),
+        mpm_init_cov.to(device).clone(),
+        device=device,
+        requires_grad=True,
+        n_grid=grid_size,
+        grid_lim=1.0,
+    )
+
+    setup_trainer()
 
 
     mpm_solver = MPMWARPDiff(10)

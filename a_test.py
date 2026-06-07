@@ -15,6 +15,9 @@ class Young_Moudulous_Map(torch.nn.Module):
             E_out[i] = self.target[self.inverted_index[i]]
         return E_out
 
+filling_mask = torch.zeros(10, dtype=torch.bool)
+print(filling_mask)
+
 mask = torch.zeros(3, dtype=torch.int8)
 mask[0] = 2
 mask[1] = 1
@@ -39,10 +42,11 @@ for i in range(1,10):
     print(test.target)
     print(test.target.grad)
 
-    optimizer.step()
-    optimizer.zero_grad()
-
-    print(test.target.grad)
+    if i % 2 == 0:
+        optimizer.step()
+        optimizer.zero_grad()
+        print("after stepping:")
+        print(test.target.grad)
 
     
 
