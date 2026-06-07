@@ -35,7 +35,7 @@ self.scheduler:
 
 1. 步
    1. 分片
-      1. substep (帧)
+      1. substep
 
 步级：
 
@@ -43,7 +43,7 @@ train_iters: 总训练步数
 
 gradient_accumulate_steps: 多少步的 backward 做一次 step
 
-window_size: 这一步将进行多长时间的仿真
+window_size: 这一步将进行多少帧的仿真
 
 片级
 
@@ -51,7 +51,7 @@ temporal_stride: 每一次分片进行多长的仿真
 
 start/end_time_idx: 这一个分片的起始/终止时间
 
-帧级
+
 
 delta_time: 一帧的长度
 
