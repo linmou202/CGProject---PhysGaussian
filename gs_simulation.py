@@ -286,12 +286,13 @@ if __name__ == "__main__":
     # build inverted index and filling mask
     inverted_index = torch.zeros((mpm_init_pos.shape[0]), dtype=torch.int8, device=device)
     original_mask = torch.zeros((mpm_init_pos.shape[0]), dtype=torch.bool)
-    current_item = 0
+    is_filled = False
+    current_section = 0
     for i in range(0, gs_num):
-        while (current_item < num_items and i >= cluster_index[current_item*2]):
-            current_item = current_item + 1
-        inverted_index[i] = current_item
-        if current_item % 2 == 0:
+        while (current_section < (2*num_items + 1) and i >= cluster_index[current_section + 1]):
+            current_section = current_section + 1
+        inverted_index[i] = current_section // 2
+        if current_section % 2 == 0:
             original_mask[i] = True
         else:
             original_mask[i] = False
