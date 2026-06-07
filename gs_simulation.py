@@ -236,7 +236,7 @@ if __name__ == "__main__":
         )
 
         for i in range(0, num_items):
-            print(str.encode(f"""Filling internal particles of item {i} ..."""))
+            print(f"""Filling internal particles of item {i} ...""")
             cls_mpm_init_pos.append(fill_particles(
                 pos=cls_pos[i],
                 opacity=cls_opacity[i],
@@ -291,7 +291,7 @@ if __name__ == "__main__":
     for i in range(0, num_particles):
         while (current_section < (2*num_items + 1) and i >= cluster_index[current_section + 1]):
             current_section = current_section + 1
-            print(str.encode(f"""building mask for section {current_section}"""))
+            print(f"""building mask for section {current_section}""")
         inverted_index[i] = current_section // 2
         if current_section % 2 == 0:
             original_mask[i] = True
@@ -442,6 +442,7 @@ if __name__ == "__main__":
             if height is None or width is None:
                 height = cv2_img.shape[0] // 2 * 2
                 width = cv2_img.shape[1] // 2 * 2
+                print(f"""image height: {height}, image width: {width}""")
             assert args.output_path is not None
             cv2.imwrite(
                 os.path.join(args.output_path, f"{frame}.png".rjust(8, "0")),
@@ -450,6 +451,7 @@ if __name__ == "__main__":
 
     if args.render_img and args.compile_video:
         fps = int(1.0 / time_params["frame_dt"])
+        print(f"""video fps: {fps}""")
         os.system(
             f"ffmpeg -framerate {fps} -i {args.output_path}/%04d.png -c:v libx264 -s {width}x{height} -y -pix_fmt yuv420p {args.output_path}/output.mp4"
         )
