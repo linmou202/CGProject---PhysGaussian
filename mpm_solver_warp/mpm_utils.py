@@ -665,58 +665,58 @@ def compute_stress_from_F_trial(
         state.particle_stress[p] = (stress + wp.transpose(stress)) / 2.0
 
 
-# @wp.kernel
-# def compute_cov_from_F(state: MPMStateStruct, model: MPMModelStruct):
-#     p = wp.tid()
+@wp.kernel
+def compute_cov_from_F(state: MPMStateStruct, model: MPMModelStruct):
+    p = wp.tid()
 
-#     F = state.particle_F_trial[p]
+    F = state.particle_F_trial[p]
 
-#     init_cov = wp.mat33(0.0)
-#     init_cov[0, 0] = state.particle_init_cov[p * 6]
-#     init_cov[0, 1] = state.particle_init_cov[p * 6 + 1]
-#     init_cov[0, 2] = state.particle_init_cov[p * 6 + 2]
-#     init_cov[1, 0] = state.particle_init_cov[p * 6 + 1]
-#     init_cov[1, 1] = state.particle_init_cov[p * 6 + 3]
-#     init_cov[1, 2] = state.particle_init_cov[p * 6 + 4]
-#     init_cov[2, 0] = state.particle_init_cov[p * 6 + 2]
-#     init_cov[2, 1] = state.particle_init_cov[p * 6 + 4]
-#     init_cov[2, 2] = state.particle_init_cov[p * 6 + 5]
+    init_cov = wp.mat33(0.0)
+    init_cov[0, 0] = state.particle_init_cov[p * 6]
+    init_cov[0, 1] = state.particle_init_cov[p * 6 + 1]
+    init_cov[0, 2] = state.particle_init_cov[p * 6 + 2]
+    init_cov[1, 0] = state.particle_init_cov[p * 6 + 1]
+    init_cov[1, 1] = state.particle_init_cov[p * 6 + 3]
+    init_cov[1, 2] = state.particle_init_cov[p * 6 + 4]
+    init_cov[2, 0] = state.particle_init_cov[p * 6 + 2]
+    init_cov[2, 1] = state.particle_init_cov[p * 6 + 4]
+    init_cov[2, 2] = state.particle_init_cov[p * 6 + 5]
 
-#     cov = F * init_cov * wp.transpose(F)
+    cov = F * init_cov * wp.transpose(F)
 
-#     state.particle_cov[p * 6] = cov[0, 0]
-#     state.particle_cov[p * 6 + 1] = cov[0, 1]
-#     state.particle_cov[p * 6 + 2] = cov[0, 2]
-#     state.particle_cov[p * 6 + 3] = cov[1, 1]
-#     state.particle_cov[p * 6 + 4] = cov[1, 2]
-#     state.particle_cov[p * 6 + 5] = cov[2, 2]
+    state.particle_cov[p * 6] = cov[0, 0]
+    state.particle_cov[p * 6 + 1] = cov[0, 1]
+    state.particle_cov[p * 6 + 2] = cov[0, 2]
+    state.particle_cov[p * 6 + 3] = cov[1, 1]
+    state.particle_cov[p * 6 + 4] = cov[1, 2]
+    state.particle_cov[p * 6 + 5] = cov[2, 2]
 
 
-# @wp.kernel
-# def compute_R_from_F(state: MPMStateStruct, model: MPMModelStruct):
-#     p = wp.tid()
+@wp.kernel
+def compute_R_from_F(state: MPMStateStruct, model: MPMModelStruct):
+    p = wp.tid()
 
-#     F = state.particle_F_trial[p]
+    F = state.particle_F_trial[p]
 
-#     # polar svd decomposition
-#     U = wp.mat33(0.0)
-#     V = wp.mat33(0.0)
-#     sig = wp.vec3(0.0)
-#     wp.svd3(F, U, sig, V)
+    # polar svd decomposition
+    U = wp.mat33(0.0)
+    V = wp.mat33(0.0)
+    sig = wp.vec3(0.0)
+    wp.svd3(F, U, sig, V)
 
-#     if wp.determinant(U) < 0.0:
-#         U[0, 2] = -U[0, 2]
-#         U[1, 2] = -U[1, 2]
-#         U[2, 2] = -U[2, 2]
+    if wp.determinant(U) < 0.0:
+        U[0, 2] = -U[0, 2]
+        U[1, 2] = -U[1, 2]
+        U[2, 2] = -U[2, 2]
 
-#     if wp.determinant(V) < 0.0:
-#         V[0, 2] = -V[0, 2]
-#         V[1, 2] = -V[1, 2]
-#         V[2, 2] = -V[2, 2]
+    if wp.determinant(V) < 0.0:
+        V[0, 2] = -V[0, 2]
+        V[1, 2] = -V[1, 2]
+        V[2, 2] = -V[2, 2]
 
-#     # compute rotation matrix
-#     R = U * wp.transpose(V)
-#     state.particle_R[p] = wp.transpose(R) # particle R is removed
+    # compute rotation matrix
+    R = U * wp.transpose(V)
+    state.particle_R[p] = wp.transpose(R) # particle R is removed
 
 
 @wp.kernel

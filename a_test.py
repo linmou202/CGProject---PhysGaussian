@@ -3,6 +3,32 @@ import numpy
 import math
 
 
+a = torch.zeros(100)
+for i in range(0,100):
+    a[i] = i
+b = a[[10,20]]
+print(b)
+
+
+"""
+A = torch.zeros([2,2], dtype=torch.float)
+A[0][0] = 1
+A[0][1] = 2
+# A[1][0] = 5
+A[1][1] = 1
+A.requires_grad_()
+U, S, VT = torch.linalg.svd(A)
+B = torch.matmul(U, VT)
+
+loss = torch.linalg.matrix_norm(B)
+loss.backward()
+
+print(U, VT)
+print(B)
+print(A.grad)
+
+"""
+"""
 class Young_Moudulous_Map(torch.nn.Module):
     def __init__(self, target, inverted_index, gs_num):
         super(Young_Moudulous_Map, self).__init__()
@@ -14,6 +40,8 @@ class Young_Moudulous_Map(torch.nn.Module):
         for i in range(0, self.gs_num):
             E_out[i] = self.target[self.inverted_index[i]]
         return E_out
+
+op = 10
 
 filling_mask = torch.zeros(10, dtype=torch.bool)
 print(filling_mask)
@@ -38,7 +66,9 @@ for i in range(1,10):
     loss = another_target[0] * another_target[0] + another_target[1] * another_target[1] + another_target[2] * another_target[2]
     loss.backward()
 
-    print(str.encode(f"""iteration {i}"""))
+    torch.matmul()
+
+    print(f"iteration {i}")
     print(test.target)
     print(test.target.grad)
 
@@ -50,3 +80,4 @@ for i in range(1,10):
 
     
 
+"""

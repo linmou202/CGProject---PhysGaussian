@@ -238,7 +238,7 @@ if __name__ == "__main__":
         )
 
         for i in range(0, num_items):
-            print(str.encode(f"""Filling internal particles of item {i} ..."""))
+            print(f"""Filling internal particles of item {i} ...""")
             cls_mpm_init_pos.append(fill_particles(
                 pos=cls_pos[i],
                 opacity=cls_opacity[i],
@@ -288,12 +288,13 @@ if __name__ == "__main__":
     # build inverted index and filling mask
     inverted_index = torch.zeros((mpm_init_pos.shape[0]), dtype=torch.int8, device=device)
     original_mask = torch.zeros((mpm_init_pos.shape[0]), dtype=torch.bool)
-    current_item = 0
-    for i in range(0, gs_num):
-        while (current_item < num_items and i >= cluster_index[current_item*2]):
-            current_item = current_item + 1
-        inverted_index[i] = current_item
-        if current_item % 2 == 0:
+    current_section = 0
+    for i in range(0, num_particles):
+        while (current_section < (2*num_items + 1) and i >= cluster_index[current_section + 1]):
+            current_section = current_section + 1
+            print(f"""building mask for section {current_section}""")
+        inverted_index[i] = current_section // 2
+        if current_section % 2 == 0:
             original_mask[i] = True
         else:
             original_mask[i] = False
@@ -380,35 +381,34 @@ if __name__ == "__main__":
     # set up the mpm solver
     print("Initializing MPM solver and setting up boundary conditions...")
 
+    learned_E = setup_trainer()
+
     mpm_state = MPMStateStruct()
-    mpm_state.init(gs_num, device=device, requires_grad=True)
+    mpm_state.init(num_particles, device=device, requires_grad=True)
     mpm_state.from_torch(
         mpm_init_pos.to(device).clone(),
         mpm_init_vol.float().to(device).clone(),
         mpm_init_cov.to(device).clone(),
         device=device,
         requires_grad=True,
-        n_grid=grid_size,
-        grid_lim=1.0,
-    )
-
-    setup_trainer()
-
-
-    mpm_solver = MPMWARPDiff(10)
-    mpm_solver.load_initial_data_from_torch(
-        mpm_init_pos,
-        mpm_init_vol,
-        mpm_init_cov,
         n_grid=material_params["n_grid"],
         grid_lim=material_params["grid_lim"],
     )
-    mpm_solver.set_parameters_dict(cluster_index, inverted_index, cls_E, material_params)
+
+    mpm_model = MPMModelStruct()
+    mpm_model.init(num_particles, device=device, requires_grad=True)
+    mpm_model.init_other_params(n_grid=material_params["n_grid"], grid_lim=material_params["grid_lim"], device=device)
+    
+    mpm_solver = MPMWARPDiff(
+        num_particles, n_grid=material_params["n_grid"], grid_lim=material_params["grid_lim"], device=device
+    )
+    mpm_solver.set_parameters_dict(mpm_model, mpm_state, material_params)
+    mpm_solver.set_E_nu_from_torch(mpm_model, learned_E, torch.tensor(material_params["nu"]), device=device)
 
     # Note: boundary conditions may depend on mass, so the order cannot be changed!
-    set_boundary_conditions(mpm_solver, bc_params, time_params)
+    set_boundary_conditions(mpm_solver, bc_params, time_params) # TODO
 
-    mpm_solver.finalize_mu_lam()
+    mpm_solver.prepare_mu_lam(mpm_model, mpm_state, device)
 
     # run the simulation
     if args.output_ply or args.output_h5:
@@ -418,6 +418,7 @@ if __name__ == "__main__":
 
         save_data_at_frame(
             mpm_solver,
+            mpm_state,
             directory_to_save,
             0,
             save_to_ply=args.output_ply,
@@ -437,11 +438,12 @@ if __name__ == "__main__":
             stage_renderer.set_rasterizer(frame)
 
         for step in range(step_per_frame):
-            mpm_solver.p2g2p(frame, substep_dt, device=device)
+            mpm_solver.p2g2p(mpm_model, mpm_state, frame, substep_dt, device=device)
 
         if args.output_ply or args.output_h5:
             save_data_at_frame(
                 mpm_solver,
+                mpm_state,
                 directory_to_save,
                 frame + 1,
                 save_to_ply=args.output_ply,
@@ -449,16 +451,17 @@ if __name__ == "__main__":
             )
 
         if args.render_img:
-            pos = mpm_solver.export_particle_x_to_torch()[original_mask].to(device)
-            cov3D = mpm_solver.export_particle_cov_to_torch()
-            rot = mpm_solver.export_particle_R_to_torch()
+            pos = mpm_solver.export_particle_x_to_torch(mpm_state, mpm_model)[original_mask].to(device)
+            cov3D = mpm_solver.export_particle_cov_to_torch(mpm_state, mpm_model)
+            rot = mpm_solver.export_particle_R_to_torch(mpm_state, mpm_model)
             cov3D = cov3D.view(-1, 6)[original_mask].to(device)
             rot = rot.view(-1, 3, 3)[original_mask].to(device)
 
-            cv2_img = stage_renderer.render_image_from_gaussian(pos, cov3D, opacity_render, shs_render, rot)
+            cv2_img = stage_renderer.render_image_from_gaussian(pos, cov3D, opacity_render[original_mask], shs_render[original_mask], rot)
             if height is None or width is None:
                 height = cv2_img.shape[0] // 2 * 2
                 width = cv2_img.shape[1] // 2 * 2
+                print()
             assert args.output_path is not None
             cv2.imwrite(
                 os.path.join(args.output_path, f"{frame}.png".rjust(8, "0")),

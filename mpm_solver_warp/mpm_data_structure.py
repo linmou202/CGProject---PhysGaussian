@@ -17,10 +17,12 @@ class MPMStateStruct(object):
     particle_x: wp.array(dtype=wp.vec3)  # current position
     particle_v: wp.array(dtype=wp.vec3)  # particle velocity
     particle_F: wp.array(dtype=wp.mat33)  # particle elastic deformation gradient
+    particle_init_cov: wp.array(dtype=float)  # initial covariance matrix
     particle_cov: wp.array(dtype=float)  # current covariance matrix
     particle_F_trial: wp.array(
         dtype=wp.mat33
     )  # apply return mapping on this to obtain elastic def grad
+    particle_R: wp.array(dtype=wp.mat33)  # rotation matrix
     particle_stress: wp.array(dtype=wp.mat33)  # Kirchoff stress, elastic stress
     particle_C: wp.array(dtype=wp.mat33)
     particle_vol: wp.array(dtype=float)  # current volume
@@ -54,11 +56,18 @@ class MPMStateStruct(object):
         self.particle_F = wp.zeros(
             shape, dtype=wp.mat33, device=device, requires_grad=requires_grad
         )
+        self.particle_init_cov = wp.zeros(
+            shape, dtype=wp.mat33, device=device, requires_grad=requires_grad
+        )
         self.particle_cov = wp.zeros(
             shape * 6, dtype=float, device=device, requires_grad=False
         )
 
         self.particle_F_trial = wp.zeros(
+            shape, dtype=wp.mat33, device=device, requires_grad=requires_grad
+        )
+
+        self.particle_R = wp.zeros(
             shape, dtype=wp.mat33, device=device, requires_grad=requires_grad
         )
 

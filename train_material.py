@@ -277,37 +277,6 @@ class Trainer:
             mpm_solver,
         )
 
-        # setup boundary condition:
-        moving_pts_path = os.path.join(dataset_dir, "moving_part_points.ply")
-        if os.path.exists(moving_pts_path):
-            moving_pts = pcu.load_mesh_v(moving_pts_path)
-            moving_pts = torch.from_numpy(moving_pts).float().to(device)
-            moving_pts = (moving_pts + shift) / scale
-            freeze_mask = find_far_points(
-                sim_xyzs, moving_pts, thres=0.5 / grid_size
-            ).bool()
-            freeze_pts = sim_xyzs[freeze_mask, :]
-
-            grid_freeze_mask = apply_grid_bc_w_freeze_pts(
-                grid_size, 1.0, freeze_pts, mpm_solver
-            )
-            self.freeze_mask = freeze_mask
-
-            # does not prefer boundary condition on particle
-            # freeze_mask_select = setup_boundary_condition_with_points(sim_xyzs, moving_pts,
-            #                                                         self.mpm_solver, self.mpm_state, thres=0.5 / grid_size)
-            # self.freeze_mask = freeze_mask_select.bool()
-        else:
-            raise NotImplementedError
-
-        num_freeze_pts = self.freeze_mask.sum()
-        print(
-            "num freeze pts in total",
-            num_freeze_pts.item(),
-            "num moving pts",
-            num_particles - num_freeze_pts.item(),
-        )
-
         # init fields for simulation, e.g. density, external force, etc.
 
         # padd init density, youngs,
@@ -366,8 +335,7 @@ class Trainer:
         density, youngs_modulus, ret_poisson, entropy = self.get_material_params(device)
         initial_position_time0 = self.particle_init_position.clone()
 
-        query_mask = torch.logical_not(self.freeze_mask)
-        query_pts = initial_position_time0[query_mask, :]
+        query_pts = initial_position_time0
 
         # scaling
         velocity = velocity * 0.1  # not padded yet
@@ -397,9 +365,7 @@ class Trainer:
 
         initial_position_time0 = self.particle_init_position.detach()
 
-        # query_mask = torch.logical_not(self.freeze_mask)
-        query_mask = torch.ones_like(self.freeze_mask).bool()
-        query_pts = initial_position_time0[query_mask, :]
+        query_pts = initial_position_time0
         if self.args.entropy_cls > 0:
             sim_params, entropy = self.sim_fields(query_pts)
         else:
@@ -418,7 +384,6 @@ class Trainer:
         youngs_modulus = torch.clamp(youngs_modulus, 1000.0, 5e8)
 
         density = self.density.detach().clone()
-        # density[self.freeze_mask] = 100000
         ret_poisson = self.poisson_ratio.detach().clone()
 
         return density, youngs_modulus, ret_poisson, entropy
@@ -454,8 +419,6 @@ class Trainer:
             particle_C,
             entropy,
         ) = self.get_simulation_input(device)
-
-        init_velo_mean = particle_velo[query_mask, :].mean().item()
 
         num_particles = particle_pos.shape[0]
 
@@ -607,9 +570,6 @@ class Trainer:
             "young_mean, max:",
             youngs_modulus.mean().item(),
             youngs_modulus.max().item(),
-            do_velo_opt,
-            "init_velo_mean:",
-            init_velo_mean,
         )
 
 
