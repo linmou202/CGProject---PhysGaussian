@@ -4,7 +4,7 @@
     "rotation_axis": [],
     "substep_dt": 1e-4,
     "frame_dt": 2e-2,
-    "frame_num": 300,
+    "frame_num": 100,
     "E": 1e4,
     "nu": 0.3,
     "n_grid": 100,
@@ -141,7 +141,7 @@
     "init_azimuthm": -90.0,
     "init_elevation": 30.0,
     "init_radius": 2.5,
-    "move_camera": true,
+    "move_camera": false,
     "delta_a": 0.5,
     "delta_e": 0.0,
     "delta_r": 0.0

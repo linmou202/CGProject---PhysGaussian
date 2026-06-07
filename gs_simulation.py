@@ -269,6 +269,9 @@ if __name__ == "__main__":
             particle_position_tensor_list_to_ply(cls_mpm_init_pos, "./log/filled_particles.ply")
         
     else:
+        # create index space for the non-clustered points
+        cluster_index.append(None)
+        cluster_index.append(None)
         for i in range(0, num_items+1):
             cls_mpm_init_pos.append(cls_pos[i].to(device=device))
 
