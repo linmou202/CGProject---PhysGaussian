@@ -1,6 +1,7 @@
 import torch
 import numpy
 import math
+import cv2
 
 
 a = torch.zeros(100)
@@ -11,8 +12,21 @@ b = a[[10,20]]
 
 d = a.view((10,10))
 e = d[1:2]
-print(0.95**50)
 
+f = torch.zeros((3,256,256))
+for j in range(0, 256):
+    for k in range(0, 256):
+        f[0, j, k] = 255
+        f[1, j, k] = 0
+        f[2, j, k] = 0
+f = f.permute(1, 2, 0)
+print(f.shape)
+f = f.numpy()
+
+a = cv2.imread("test_img.png")
+
+a = cv2.cvtColor(a, cv2.COLOR_BGR2RGB) # cv writes as bgr, read as bgr.
+cv2.imwrite("converted_img.png", f)
 
 """
 A = torch.zeros([2,2], dtype=torch.float)

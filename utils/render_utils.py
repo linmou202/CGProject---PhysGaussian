@@ -249,7 +249,4 @@ class STAGERENDERER:
             cov3D_precomp=cov3D,
         )
 
-        cv2_img = rendering.permute(1, 2, 0).detach().cpu().numpy()
-        cv2_img = cv2.cvtColor(cv2_img, cv2.COLOR_BGR2RGB)
-
-        return cv2_img
+        return rendering

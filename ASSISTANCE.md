@@ -77,13 +77,19 @@ checkpoint_steps: 多少 substep 后存一次档
 
 修改 init_boundary_conditions 函数
 
+从 ref_path 读入名字为 f"{frame_num}.png" 的图片，其中 frame_num 为该帧的编号
+
+现在 render_utils 只会返回未经处理的图片
+
 
 
 待实施的改动：
 
-从 ref_path 读入名字为 f"{frame_num}.png" 的图片，其中 frame_num 为该帧的编号。
+注释掉 calculate_c_and_r 的 backward 中的 assertion
 
 在 set_require_grad 里面为 cov 和 rotation 加上梯度计算
+
+
 
 
 

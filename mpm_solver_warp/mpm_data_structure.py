@@ -60,7 +60,7 @@ class MPMStateStruct(object):
             shape, dtype=wp.mat33, device=device, requires_grad=requires_grad
         )
         self.particle_cov = wp.zeros(
-            shape * 6, dtype=float, device=device, requires_grad=False
+            shape * 6, dtype=float, device=device, requires_grad=requires_grad
         )
 
         self.particle_F_trial = wp.zeros(
@@ -208,7 +208,7 @@ class MPMStateStruct(object):
         if tensor_cov is not None:
             cov_numpy = tensor_cov.reshape(-1).detach().clone().cpu().numpy()
             self.particle_cov = wp.from_numpy(
-                cov_numpy, dtype=float, device=device, requires_grad=False
+                cov_numpy, dtype=float, device=device, requires_grad=requires_grad
             )
             self.particle_init_cov = wp.from_numpy(
                 cov_numpy, dtype=float, device=device, requires_grad=False
@@ -309,10 +309,12 @@ class MPMStateStruct(object):
     def set_require_grad(self, requires_grad=True):
         self.particle_x.requires_grad = requires_grad
         self.particle_v.requires_grad = requires_grad
+        self.particle_cov.requires_grad = requires_grad
         self.particle_F.requires_grad = requires_grad
         self.particle_F_trial.requires_grad = requires_grad
         self.particle_stress.requires_grad = requires_grad
         self.particle_C.requires_grad = requires_grad
+        self.particle_R.requires_grad = requires_grad
 
         self.grid_v_out.requires_grad = requires_grad
         self.grid_v_in.requires_grad = requires_grad
@@ -380,6 +382,7 @@ class MPMStateStruct(object):
 
         # new_state.particle_selection = wp.clone(self.particle_selection, requires_grad=False)
 
+        wp.copy(new_state.particle_init_cov, self.particle_init_cov)
         wp.copy(new_state.particle_vol, self.particle_vol)
         wp.copy(new_state.particle_density, self.particle_density)
         wp.copy(new_state.particle_mass, self.particle_mass)

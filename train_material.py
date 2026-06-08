@@ -31,6 +31,7 @@ import random
 
 from utils.interface import (
     MPMDifferentiableSimulationClean,
+    Calculate_Cov_and_Rot
 )
 
 from utils.render_utils import *
@@ -214,7 +215,11 @@ class Trainer:
 
             num_step_with_grad = num_substeps * (end_time_idx - start_time_idx)
 
-            gt_frame = gt_videos[[end_time_idx - 1]]
+            gt_frame = cv2.imread(
+                os.path.join(self.reference_path, f"{end_time_idx-1}.png".rjust(8, "0"))
+            )
+            gt_frame = torch.from_numpy(cv2.cvtColor(gt_frame, cv2.COLOR_RGB2BGR), ).permute(2, 0, 1).float()
+            gt_frame = gt_frame / 255
 
             if start_time_idx != 0:
                 density, youngs_modulus = self.get_material_params(
@@ -242,8 +247,7 @@ class Trainer:
             )
 
             # substep-3: render gaussian
-            cov3D = compute_C(init_cov, particle_F)
-            rot = compute_rot(particle_F)
+            cov3D, rot = Calculate_Cov_and_Rot.apply(self.init_cov, particle_F, device)
             simulated_image = self.stage_renderer.render_image_from_gaussian(particle_pos, cov3D, self.opacity, self.shs, rot)
             # print("debug", simulated_video.shape, gt_frame.shape, gaussian_pos.shape, init_xyzs.shape, density.shape, query_mask.sum().item())
 
@@ -283,11 +287,7 @@ class Trainer:
         
         self.scheduler.step()
 
-        print(
-            "young_mean, max:",
-            youngs_modulus.mean().item(),
-            youngs_modulus.max().item(),
-        )
+        print(self.E_module.E)
 
 
     def train(

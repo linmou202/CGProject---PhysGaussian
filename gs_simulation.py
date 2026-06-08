@@ -95,6 +95,8 @@ if __name__ == "__main__":
         AssertionError("Model path does not exist!")
     if not os.path.exists(args.config):
         AssertionError("Scene config does not exist!")
+    if not os.path.exists(args.ref_path):
+        AssertionError("Reference Images does not exist!")
     if args.output_path is not None and not os.path.exists(args.output_path):
         os.makedirs(args.output_path)
 
@@ -525,7 +527,9 @@ if __name__ == "__main__":
             cov3D = cov3D.view(-1, 6).to(device)
             rot = rot.view(-1, 3, 3).to(device)
 
-            cv2_img = stage_renderer.render_image_from_gaussian(pos, cov3D, opacity_render, shs_render, rot)
+            rendering = stage_renderer.render_image_from_gaussian(pos, cov3D, opacity_render, shs_render, rot)
+            cv2_img = rendering.permute(1, 2, 0).detach().cpu().numpy()
+            cv2_img = cv2.cvtColor(cv2_img, cv2.COLOR_BGR2RGB)
             if height is None or width is None:
                 height = cv2_img.shape[0] // 2 * 2
                 width = cv2_img.shape[1] // 2 * 2
