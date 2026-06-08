@@ -75,12 +75,29 @@ checkpoint_steps: 多少 substep 后存一次档
 
 用 E_module 取代了 E_nu_list
 
+修改 init_boundary_conditions 函数
+
 
 
 待实施的改动：
 
-修改 init_boundary_conditions 函数
-
-增加参数 reference_video 的传入
+从 ref_path 读入名字为 f"{frame_num}.png" 的图片，其中 frame_num 为该帧的编号。
 
 在 set_require_grad 里面为 cov 和 rotation 加上梯度计算
+
+
+
+smoke test 指令参考：
+
+```shell
+python gs_simulation.py --model_path ./model/pillow2sofa_whitebg-trained/ --output_path output --ref_path reference_data --config ./config/pillow2sofa_config.json --lr 1e-3 --render_img --white_bg --compile_video
+```
+
+
+
+运行指令参考：
+
+```shell
+python gs_simulation.py --model_path ./model/pillow2sofa_whitebg-trained/ --output_path output --ref_path reference_data --config ./config/pillow2sofa_config.json --train_iters 10 --warmup_steps 2 --lr 1e-3 --num_frames 50 --temporal_stride 3 --loss_decay 0.95 --render_img --compile_video --white_bg
+```
+

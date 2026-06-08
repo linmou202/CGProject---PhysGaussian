@@ -716,8 +716,7 @@ def compute_R_from_F(state: MPMStateStruct, model: MPMModelStruct):
 
     # compute rotation matrix
     R = U * wp.transpose(V)
-    state.particle_R[p] = wp.transpose(R) # particle R is removed
-
+    state.particle_R[p] = wp.transpose(R)
 
 @wp.kernel
 def add_damping_via_grid(state: MPMStateStruct, scale: float):

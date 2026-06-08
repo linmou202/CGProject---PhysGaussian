@@ -30,7 +30,6 @@ import warp as wp
 import random
 
 from utils.interface import (
-    MPMDifferentiableSimulationWCheckpoint,
     MPMDifferentiableSimulationClean,
 )
 
@@ -41,6 +40,7 @@ class Trainer:
     def __init__(
             self,
             stage_renderer,
+            init_cov,
             shs,
             opacity,
             mpm_state,
@@ -49,7 +49,7 @@ class Trainer:
             E_items,
             density_value,
             inverted_index,
-            reference_video,
+            reference_path,
             frame_length = 0.02,
             num_frames = 50,
             ssim = 0.9,                        # the ratio between L1 loss and ssim loss
@@ -70,7 +70,8 @@ class Trainer:
         # setup the gaussians
         self.particle_init_position = mpm_solver.export_particle_x_to_torch(mpm_state, mpm_model).detach().clone()
         self.stage_renderer = stage_renderer
-        self.reference_video = reference_video
+        self.reference_path = reference_path
+        self.init_cov = init_cov
         self.opacity = opacity
         self.shs = shs
 
@@ -104,8 +105,9 @@ class Trainer:
 
         self.density = torch.ones(self.particle_init_position.shape[0]) * density_value
 
+        initial_density, initial_E = self.get_material_params(device)
         mpm_solver.set_E_from_torch(
-            mpm_model, self.E_module.forward(), device
+            mpm_model, initial_E, device
         )
         mpm_solver.prepare_mu_lam(mpm_model, mpm_state, device)
 
@@ -136,9 +138,7 @@ class Trainer:
         Outs: All padded
             density: [N]
             young_modulus: [N]
-            poisson_ratio: [N]
             velocity: [N, 3]
-            query_mask: [N]
         """
         # init density and young's modulous
         density, youngs_modulus = self.get_material_params(device)
@@ -180,8 +180,6 @@ class Trainer:
             loss_decay = 0.95,
             device = "cuda:0"
         ):
-
-        gt_videos = self.reference_video[1 : self.num_frames, ...]
 
         window_size = int(self.window_size_schduler.compute_state(self.step)[0])
 
@@ -244,6 +242,8 @@ class Trainer:
             )
 
             # substep-3: render gaussian
+            cov3D = compute_C(init_cov, particle_F)
+            rot = compute_rot(particle_F)
             simulated_image = self.stage_renderer.render_image_from_gaussian(particle_pos, cov3D, self.opacity, self.shs, rot)
             # print("debug", simulated_video.shape, gt_frame.shape, gaussian_pos.shape, init_xyzs.shape, density.shape, query_mask.sum().item())
 
@@ -270,11 +270,11 @@ class Trainer:
             or self.step == (self.train_iters - 1)
         ):
 
-            torch.nn.utils.clip_grad_norm_(
-                self.trainable_params,
-                self.max_grad_norm,
-                error_if_nonfinite=False,
-            )  # error if nonfinite is false
+            # torch.nn.utils.clip_grad_norm_(
+            #     self.trainable_params,
+            #     self.max_grad_norm,
+            #     error_if_nonfinite=False,
+            # )  # error if nonfinite is false
 
             self.optimizer.step()
             self.optimizer.zero_grad()
@@ -290,8 +290,20 @@ class Trainer:
         )
 
 
-    def train(self, device):
+    def train(
+            self, 
+            temporal_stride = 3,
+            num_substeps = 1,
+            loss_decay = 0.95,
+            device = "cuda:0"
+        ):
+
         # might remove tqdm when multiple node
         for index in tqdm(range(self.step, self.train_iters), desc="Training progress"):
-            self.train_one_step(device)
+            self.train_one_step(
+                temporal_stride = temporal_stride,
+                num_substeps = num_substeps,
+                loss_decay = loss_decay,
+                device = device
+            )
             self.step += 1

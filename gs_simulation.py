@@ -75,7 +75,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", type=str, required=True)
     parser.add_argument("--output_path", type=str, default=None)
+    parser.add_argument("--ref_path", type=str, required=True)
     parser.add_argument("--config", type=str, required=True)
+    parser.add_argument("--train_iters", type=int, default=1)
+    parser.add_argument("--warmup_steps", type=int, default=1)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--num_frames", type=float, default=5)
+    parser.add_argument("--temporal_stride", type=float, default=2)
+    parser.add_argument("--loss_decay", type=float, default=0.95)
     parser.add_argument("--output_ply", action="store_true")
     parser.add_argument("--output_h5", action="store_true")
     parser.add_argument("--render_img", action="store_true")
@@ -381,8 +388,8 @@ if __name__ == "__main__":
     # FRAMEWORK_TODO: Change things below this line ----------------------------------------
     
     
-    # set up the mpm solver
-    print("Initializing MPM solver and setting up boundary conditions...")
+    # set up the mpm solver for training
+    print("Initializing MPM solver for the training...")
 
     mpm_state = MPMStateStruct()
     mpm_state.init(num_particles, device=device, requires_grad=True)
@@ -404,21 +411,74 @@ if __name__ == "__main__":
         num_particles, n_grid=material_params["n_grid"], grid_lim=material_params["grid_lim"], device=device
     )
     mpm_solver.set_parameters_dict(mpm_model, mpm_state, material_params)
-    # mpm_solver.set_E_from_torch(mpm_model, cls_E/1000, device=device)
 
     # Note: boundary conditions may depend on mass, so the order cannot be changed!
-    set_boundary_conditions(mpm_solver, bc_params, time_params) # TODO
+    set_boundary_conditions(mpm_solver, mpm_state, bc_params, time_params)
 
-    # mpm_solver.prepare_mu_lam(mpm_model, mpm_state, device)
-
+    # do the training
+    print("starting to train...")
     E_items = torch.ones(num_items+1) * cls_E.item() / 1000
-    trainer = Trainer(stage_renderer,
-                        ssim,
-                        gradient_accumulate_steps,
-                    )
-    learnt_E_module = trainer.train()
+    trainer = Trainer(
+        stage_renderer,
+        mpm_init_cov,
+        shs,
+        opacity,
+        mpm_state,
+        mpm_model,
+        mpm_solver,
+        E_items,
+        material_params["density"],
+        inverted_index,
+        args.ref_path,
+        frame_length = time_params["frame_dt"],
+        num_frames = args.num_frames,
+        ssim = 0.9,                        # the ratio between L1 loss and ssim loss
+        parameter_scale = 1000,            # the scaling of E
+        max_grad_norm = 1.0,
+        gradient_accumulation_steps = 1,   # after how many backwards we step once
+        warmup_step = args.warmup_steps,
+        train_iters = args.train_iters,
+        lr = args.lr,
+        device = device
+    )
+    trainer.train(
+        temporal_stride = args.temporal_stride,
+        num_substeps = 1,
+        loss_decay = args.loss_decay,
+        device = device
+    )
+    learnt_density, learnt_E = trainer.get_material_params(device)
+
+    # set up the mpm solver for simulation
+    print("Initializing MPM solver for the simulation...")
+
+    mpm_state = MPMStateStruct()
+    mpm_state.init(num_particles, device=device, requires_grad=True)
+    mpm_state.from_torch(
+        mpm_init_pos.to(device).clone(),
+        mpm_init_vol.float().to(device).clone(),
+        mpm_init_cov.to(device).clone(),
+        device=device,
+        requires_grad=True,
+        n_grid=material_params["n_grid"],
+        grid_lim=material_params["grid_lim"],
+    )
+
+    mpm_model = MPMModelStruct()
+    mpm_model.init(num_particles, device=device, requires_grad=True)
+    mpm_model.init_other_params(n_grid=material_params["n_grid"], grid_lim=material_params["grid_lim"], device=device)
+    
+    mpm_solver = MPMWARPDiff(
+        num_particles, n_grid=material_params["n_grid"], grid_lim=material_params["grid_lim"], device=device
+    )
+    mpm_solver.set_parameters_dict(mpm_model, mpm_state, material_params)
+    mpm_solver.set_E_from_torch(mpm_model, learnt_E, device=device)
+
+    set_boundary_conditions(mpm_solver, mpm_state, bc_params, time_params)
+    mpm_solver.prepare_mu_lam(mpm_model, mpm_state, device)
 
     # run the simulation
+    print("starting the simulation...")
     if args.output_ply or args.output_h5:
         directory_to_save = os.path.join(args.output_path, "simulation_ply")
         if not os.path.exists(directory_to_save):
@@ -481,3 +541,4 @@ if __name__ == "__main__":
         os.system(
             f"ffmpeg -framerate {fps} -i {args.output_path}/%04d.png -c:v libx264 -s {width}x{height} -y -pix_fmt yuv420p {args.output_path}/output.mp4"
         )
+    print("work done.")

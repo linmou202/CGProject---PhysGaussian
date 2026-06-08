@@ -4,7 +4,7 @@
     "rotation_axis": [],
     "substep_dt": 1e-4,
     "frame_dt": 2e-2,
-    "frame_num": 50,
+    "frame_num": 100,
     "E": 1e4,
     "nu": 0.3,
     "n_grid": 100,
@@ -103,7 +103,7 @@
                 0
             ],
             "start_time": 0,
-            "end_time": 0.05
+            "end_time": 0.2
         },
         {
             "type": "cuboid",
@@ -123,7 +123,7 @@
                 0
             ],
             "start_time": 0.0,
-            "end_time": 0.1
+            "end_time": 0.4
         }
     ],
     "mpm_space_vertical_upward_axis": [

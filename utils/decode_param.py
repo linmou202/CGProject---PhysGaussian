@@ -1,6 +1,7 @@
 import json
 import warp as wp
-from mpm_solver_warp.mpm_solver_warp import MPM_Simulator_WARP
+from mpm_solver_warp.mpm_solver_diff import MPMWARPDiff
+from mpm_solver_warp.mpm_data_structure import MPMStateStruct
 from mpm_solver_warp.engine_utils import *
 
 
@@ -255,7 +256,7 @@ def decode_param_json(json_file):
 
 
 def set_boundary_conditions(
-    mpm_solver: MPM_Simulator_WARP, bc_params: dict, time_params: dict
+    mpm_solver: MPMWARPDiff, mpm_state: MPMStateStruct, bc_params: dict, time_params: dict
 ):
     for bc in bc_params:
         if bc["type"] == "cuboid":
@@ -297,6 +298,7 @@ def set_boundary_conditions(
                 size = bc["size"]
 
             mpm_solver.add_impulse_on_particles(
+                mpm_state=mpm_state,
                 force=bc["force"],
                 dt=time_params["substep_dt"],
                 point=point,
@@ -315,6 +317,7 @@ def set_boundary_conditions(
             assert "end_time" in bc.keys()
 
             mpm_solver.enforce_particle_velocity_translation(
+                mpm_state=mpm_state,
                 point=bc["point"],
                 size=bc["size"],
                 velocity=bc["velocity"],
@@ -363,6 +366,7 @@ def set_boundary_conditions(
             assert "translation_scale" in bc.keys()
 
             mpm_solver.enforce_particle_velocity_rotation(
+                mpm_state=mpm_state,
                 point=bc["point"],
                 normal=bc["normal"],
                 half_height_and_radius=bc["half_height_and_radius"],

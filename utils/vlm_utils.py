@@ -1,9 +1,6 @@
 import sys
 import os
 import torch
-sys.path.append(os.path.dirname(os.path.realpath(__file__)))
-
-from ..particle_filling.filling import get_aabb
 
 def generate_bounded_image(
     file_name,
