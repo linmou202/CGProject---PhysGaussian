@@ -214,6 +214,8 @@ if __name__ == "__main__":
     generate_bounded_image('bounded_image')
     call_vlm('bounded_image','generated_data')
     cls_E, cls_filling_method = get_initial_params('generated_data')
+    if cls_E is None:
+        cls_E = torch.tensor(material_params["E"])
 
     # ensure the data is correctly generated
     # assert num_items == cls_E.shape[0]
@@ -294,7 +296,7 @@ if __name__ == "__main__":
             current_section = current_section + 1
             print(f"""building mask for section {current_section}""")
         inverted_index[i] = current_section // 2
-        if current_section % 2 == 0:
+        if current_section % 2 == 0 or filling_params["visualize"] == True:
             original_mask[i] = True
         else:
             original_mask[i] = False
@@ -371,7 +373,8 @@ if __name__ == "__main__":
         unselected_cov,
         unselected_opacity,
         unselected_shs,
-        init_screen_points
+        init_screen_points,
+        original_mask
     )
     stage_renderer.set_rasterizer(0)
 
@@ -380,8 +383,6 @@ if __name__ == "__main__":
     
     # set up the mpm solver
     print("Initializing MPM solver and setting up boundary conditions...")
-
-    learned_E = setup_trainer()
 
     mpm_state = MPMStateStruct()
     mpm_state.init(num_particles, device=device, requires_grad=True)
@@ -403,12 +404,19 @@ if __name__ == "__main__":
         num_particles, n_grid=material_params["n_grid"], grid_lim=material_params["grid_lim"], device=device
     )
     mpm_solver.set_parameters_dict(mpm_model, mpm_state, material_params)
-    mpm_solver.set_E_nu_from_torch(mpm_model, learned_E, torch.tensor(material_params["nu"]), device=device)
+    # mpm_solver.set_E_from_torch(mpm_model, cls_E/1000, device=device)
 
     # Note: boundary conditions may depend on mass, so the order cannot be changed!
     set_boundary_conditions(mpm_solver, bc_params, time_params) # TODO
 
-    mpm_solver.prepare_mu_lam(mpm_model, mpm_state, device)
+    # mpm_solver.prepare_mu_lam(mpm_model, mpm_state, device)
+
+    E_items = torch.ones(num_items+1) * cls_E.item() / 1000
+    trainer = Trainer(stage_renderer,
+                        ssim,
+                        gradient_accumulate_steps,
+                    )
+    learnt_E_module = trainer.train()
 
     # run the simulation
     if args.output_ply or args.output_h5:
@@ -451,13 +459,13 @@ if __name__ == "__main__":
             )
 
         if args.render_img:
-            pos = mpm_solver.export_particle_x_to_torch(mpm_state, mpm_model)[original_mask].to(device)
+            pos = mpm_solver.export_particle_x_to_torch(mpm_state, mpm_model).to(device)
             cov3D = mpm_solver.export_particle_cov_to_torch(mpm_state, mpm_model)
             rot = mpm_solver.export_particle_R_to_torch(mpm_state, mpm_model)
-            cov3D = cov3D.view(-1, 6)[original_mask].to(device)
-            rot = rot.view(-1, 3, 3)[original_mask].to(device)
+            cov3D = cov3D.view(-1, 6).to(device)
+            rot = rot.view(-1, 3, 3).to(device)
 
-            cv2_img = stage_renderer.render_image_from_gaussian(pos, cov3D, opacity_render[original_mask], shs_render[original_mask], rot)
+            cv2_img = stage_renderer.render_image_from_gaussian(pos, cov3D, opacity_render, shs_render, rot)
             if height is None or width is None:
                 height = cv2_img.shape[0] // 2 * 2
                 width = cv2_img.shape[1] // 2 * 2

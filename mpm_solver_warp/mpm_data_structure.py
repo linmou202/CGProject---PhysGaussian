@@ -160,6 +160,9 @@ class MPMStateStruct(object):
             self.particle_cov = wp.from_numpy(
                 cov_numpy, dtype=float, device=device, requires_grad=False
             )
+            self.particle_init_cov = wp.from_numpy(
+                cov_numpy, dtype=float, device=device, requires_grad=False
+            )
 
         if tensor_velocity is not None:
             self.particle_v = from_torch_safe(
@@ -205,6 +208,9 @@ class MPMStateStruct(object):
         if tensor_cov is not None:
             cov_numpy = tensor_cov.reshape(-1).detach().clone().cpu().numpy()
             self.particle_cov = wp.from_numpy(
+                cov_numpy, dtype=float, device=device, requires_grad=False
+            )
+            self.particle_init_cov = wp.from_numpy(
                 cov_numpy, dtype=float, device=device, requires_grad=False
             )
 

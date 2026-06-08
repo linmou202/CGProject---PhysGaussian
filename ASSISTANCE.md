@@ -47,9 +47,9 @@ window_size: 这一步将进行多少帧的仿真
 
 片级
 
-temporal_stride: 每一次分片进行多长的仿真
+temporal_stride: 每一次分片进行多少帧的仿真
 
-start/end_time_idx: 这一个分片的起始/终止时间
+start/end_time_idx: 这一个分片的起始/终止帧号
 
 
 
@@ -73,12 +73,14 @@ checkpoint_steps: 多少 substep 后存一次档
 
 删去了 # setup boundary condition 部分，因为这一部分似乎是用来固定不动点用的。
 
+用 E_module 取代了 E_nu_list
+
 
 
 待实施的改动：
 
 修改 init_boundary_conditions 函数
 
-增加对 init_cov 的初始化
+增加参数 reference_video 的传入
 
 在 set_require_grad 里面为 cov 和 rotation 加上梯度计算

@@ -4,10 +4,14 @@ import math
 
 
 a = torch.zeros(100)
+c = a.clone()
 for i in range(0,100):
     a[i] = i
 b = a[[10,20]]
-print(b)
+
+d = a.view((10,10))
+e = d[1:2]
+print(0.95**50)
 
 
 """
@@ -19,15 +23,17 @@ A[1][1] = 1
 A.requires_grad_()
 U, S, VT = torch.linalg.svd(A)
 B = torch.matmul(U, VT)
+B[0][1] = -B[0][1]
+B[0][0] = -B[0][0]
 
-loss = torch.linalg.matrix_norm(B)
+loss = torch.linalg.det(B)
 loss.backward()
 
 print(U, VT)
 print(B)
 print(A.grad)
-
 """
+
 """
 class Young_Moudulous_Map(torch.nn.Module):
     def __init__(self, target, inverted_index, gs_num):

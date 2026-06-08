@@ -98,6 +98,23 @@ class MPMWARPDiff(object):
                 ],
                 device=device,
             )
+        
+        if "nu" in kwargs:
+            if isinstance(kwargs["nu"], float):
+                wp.launch(
+                    kernel=set_value_to_float_array,
+                    dim=self.n_particles,
+                    inputs=[mpm_model.nu, kwargs["nu"]],
+                    device=device,
+                )
+            else:
+                wp.launch(
+                    kernel=set_float_vec_to_vec,
+                    dim=self.n_particles,
+                    inputs=[mpm_model.nu, kwargs["nu"]],
+                    device=device,
+                )
+        
         if "rpic_damping" in kwargs:
             mpm_model.rpic_damping = kwargs["rpic_damping"]
         if "plastic_viscosity" in kwargs:
@@ -107,7 +124,7 @@ class MPMWARPDiff(object):
         if "grid_v_damping_scale" in kwargs:
             mpm_model.grid_v_damping_scale = kwargs["grid_v_damping_scale"]
 
-    def set_E_nu(self, mpm_model, E: float, nu: float, device="cuda:0"):
+    def set_E(self, mpm_model, E: float, device="cuda:0"):
         if isinstance(E, float):
             wp.launch(
                 kernel=set_value_to_float_array,
@@ -123,39 +140,18 @@ class MPMWARPDiff(object):
                 device=device,
             )
 
-        if isinstance(nu, float):
-            wp.launch(
-                kernel=set_value_to_float_array,
-                dim=self.n_particles,
-                inputs=[mpm_model.nu, nu],
-                device=device,
-            )
-        else:
-            wp.launch(
-                kernel=set_float_vec_to_vec,
-                dim=self.n_particles,
-                inputs=[mpm_model.nu, nu],
-                device=device,
-            )
-
-    def set_E_nu_from_torch(
+    def set_E_from_torch(
         self,
         mpm_model,
         E: Float[Tensor, "n"] | Float[Tensor, "1"],
-        nu: Float[Tensor, "n"] | Float[Tensor, "1"],
         device="cuda:0",
     ):
         if E.ndim == 0:
             E_inp = E.item()  # float
         else:
             E_inp = from_torch_safe(E, dtype=wp.float32, requires_grad=True)
-
-        if nu.ndim == 0:
-            nu_inp = nu.item()  # float
-        else:
-            nu_inp = from_torch_safe(nu, dtype=wp.float32, requires_grad=True)
-
-        self.set_E_nu(mpm_model, E_inp, nu_inp, device=device)
+        
+        self.set_E(mpm_model, E_inp, device=device)
 
     def prepare_mu_lam(self, mpm_model, mpm_state, device="cuda:0"):
         # compute mu and lam from E and nu

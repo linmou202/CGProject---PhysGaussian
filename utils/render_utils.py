@@ -149,7 +149,8 @@ class STAGERENDERER:
         unselected_cov,
         unselected_opacity,
         unselected_shs,
-        init_screen_points
+        init_screen_points,
+        original_mask
     ):
         self.sim_area = sim_area
         self.rotation_matrices = rotation_matrices
@@ -171,6 +172,7 @@ class STAGERENDERER:
         self.unselected_opacity = unselected_opacity
         self.unselected_shs = unselected_shs
         self.init_screen_points = init_screen_points
+        self.original_mask = original_mask
     
     def set_rasterizer(self, frame_seq):
         self.current_camera = get_camera_view(
@@ -214,6 +216,11 @@ class STAGERENDERER:
         shs,
         rot
     ):
+        pos = pos[self.original_mask]
+        cov3D = cov3D[self.original_mask]
+        opacity = opacity[self.original_mask]
+        shs = shs[self.original_mask]
+        rot = rot[self.original_mask]
 
         pos = apply_inverse_rotations(
             undotransform2origin(

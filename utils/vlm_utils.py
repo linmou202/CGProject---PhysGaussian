@@ -31,8 +31,7 @@ def call_vlm(
 def get_initial_params(
     file_name
 ):
-    E = torch.zeros(1)
     # PART2_TODO: Read the file "\generated_data\vlm_data\file_name"
 
     # Return a tensor of Young's Modulous E , and a tensor of filling method FT (if decided not to estimate filling method, then return None instead) as well.
-    return E, None
+    return None, None
