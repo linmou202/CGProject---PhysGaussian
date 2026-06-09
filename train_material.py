@@ -288,7 +288,7 @@ class Trainer:
         
         self.scheduler.step()
 
-        print(self.E_module.E)
+        print(f"""E after step {self.step} : {self.E_module.E}""")
 
 
     def train(
