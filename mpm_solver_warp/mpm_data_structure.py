@@ -57,7 +57,7 @@ class MPMStateStruct(object):
             shape, dtype=wp.mat33, device=device, requires_grad=requires_grad
         )
         self.particle_init_cov = wp.zeros(
-            shape, dtype=wp.mat33, device=device, requires_grad=requires_grad
+            shape, dtype=float, device=device, requires_grad=requires_grad
         )
         self.particle_cov = wp.zeros(
             shape * 6, dtype=float, device=device, requires_grad=requires_grad

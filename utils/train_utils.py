@@ -2,6 +2,7 @@ import torch
 from math import exp
 import torch.nn.functional as F
 from torch.autograd import Variable
+from mpm_solver_warp.mpm_data_structure import *
 
 class Young_Moudulous_Map(torch.nn.Module):
     

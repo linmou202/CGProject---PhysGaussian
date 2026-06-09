@@ -109,10 +109,11 @@ conda create -n PhysGaussian python=3.9 mkl=2023.1.0 -y
 conda activate PhysGaussian
 
 conda install cudatoolkit=11.8
+conda install -c conda-forge gcc=9.4.0 gxx=9.4.0
 
 pip install -r requirements.txt
 
-pip install torch==2.0.0 torchvision==0.15.0 torchaudio==2.0.0 --index-url https://download.pytorch.org/whl/cu118
+pip install torch==2.0.0 torchvision==0.15.0 --index-url https://download.pytorch.org/whl/cu118
 
 pip install -e gaussian-splatting/submodules/diff-gaussian-rasterization/
 

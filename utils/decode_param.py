@@ -317,7 +317,7 @@ def set_boundary_conditions(
             assert "end_time" in bc.keys()
 
             mpm_solver.enforce_particle_velocity_translation(
-                mpm_state=mpm_state,
+                particle_pos=mpm_state.particle_x,
                 point=bc["point"],
                 size=bc["size"],
                 velocity=bc["velocity"],

@@ -25,7 +25,7 @@ from utils.system_utils import searchForMaxIteration
 from utils.graphics_utils import focal2fov
 
 # MPM dependencies
-from mpm_solver_warp.engine_utils import setup_trainer
+from mpm_solver_warp.engine_utils import *
 from mpm_solver_warp.mpm_data_structure import *
 from mpm_solver_warp.mpm_solver_diff import MPMWARPDiff
 import warp as wp
@@ -44,7 +44,7 @@ from utils.vlm_utils import *
 wp.init()
 wp.config.verify_cuda = True
 
-ti.init(arch=ti.cuda, device_memory_GB=8.0)
+ti.init(arch=ti.cuda, device_memory_GB=7.0)
 
 
 class PipelineParamsNoparse:
@@ -185,6 +185,7 @@ if __name__ == "__main__":
     if rotated_pos.shape[0] == 0:
         raise RuntimeError("There's nothing to simulate!")
 
+    print("Applying transformations...")
     transformed_pos, scale_origin, original_mean_pos = transform2origin(rotated_pos, preprocessing_params["scale"])
     transformed_pos = shift2center111(transformed_pos)
 
@@ -205,6 +206,7 @@ if __name__ == "__main__":
 
     # clustering is postponed until now because only the points that need to be simulated need to be clustered.
     # PART1_DONE: use DBSCAN to cluster the points. the last tensor stores the non-clustered points
+    print("Clustering point clouds...")
     cls_pos, cls_opacity, cls_cov, cls_screen_points, cls_shs, cls_size = DBSCAN_cluster(
         transformed_pos,
         init_opacity,
