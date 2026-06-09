@@ -10,7 +10,5 @@ pymeshlab==2023.12.post1
 scipy==1.12.0
 setuptools==68.0.0
 taichi==1.5.0
-torch==2.0.0
-torchvision==0.15.1
 tqdm==4.66.1
 warp_lang==0.10.1

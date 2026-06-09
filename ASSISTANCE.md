@@ -2,16 +2,7 @@
 
 
 
-#### train_one_step 流程:
-
-1. 将粒子重置为第 0 帧时的状态 (初始状态)
-2. 
-
-![image-20260607203010336](C:\Users\linmo\AppData\Roaming\Typora\typora-user-images\image-20260607203010336.png)
-
-![image-20260607203047711](C:\Users\linmo\AppData\Roaming\Typora\typora-user-images\image-20260607203047711.png)
-
-window_scheduler: LiinearStepAnneal:
+window_scheduler: LinearStepAnneal:
 
 total_iters: 训练总共的步数
 
@@ -81,13 +72,15 @@ checkpoint_steps: 多少 substep 后存一次档
 
 现在 render_utils 只会返回未经处理的图片
 
+在 set_require_grad 里面为 cov 和 rotation 加上梯度计算
+
 
 
 待实施的改动：
 
 注释掉 calculate_c_and_r 的 backward 中的 assertion
 
-在 set_require_grad 里面为 cov 和 rotation 加上梯度计算
+
 
 
 
@@ -105,5 +98,24 @@ python gs_simulation.py --model_path ./model/pillow2sofa_whitebg-trained/ --outp
 
 ```shell
 python gs_simulation.py --model_path ./model/pillow2sofa_whitebg-trained/ --output_path output --ref_path reference_data --config ./config/pillow2sofa_config.json --train_iters 10 --warmup_steps 2 --lr 1e-3 --num_frames 50 --temporal_stride 3 --loss_decay 0.95 --render_img --compile_video --white_bg
+```
+
+
+
+安装指令：
+
+```bash
+conda create -n PhysGaussian python=3.9 mkl=2023.1.0 -y
+conda activate PhysGaussian
+
+conda install cudatoolkit=11.8
+
+pip install -r requirements.txt
+
+pip install torch==2.0.0 torchvision==0.15.0 torchaudio==2.0.0 --index-url https://download.pytorch.org/whl/cu118
+
+pip install -e gaussian-splatting/submodules/diff-gaussian-rasterization/
+
+pip install -e gaussian-splatting/submodules/simple-knn/
 ```
 
