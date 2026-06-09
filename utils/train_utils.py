@@ -150,33 +150,3 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True):
         return ssim_map.mean(1).mean(1).mean(1)
 
 # above for compute batched SSIM
-
-def compute_cov_from_F(state: MPMStateStruct, model: MPMModelStruct):
-    p = wp.tid()
-
-    
-
-    state.particle_cov[p * 6] = cov[0, 0]
-    state.particle_cov[p * 6 + 1] = cov[0, 1]
-    state.particle_cov[p * 6 + 2] = cov[0, 2]
-    state.particle_cov[p * 6 + 3] = cov[1, 1]
-    state.particle_cov[p * 6 + 4] = cov[1, 2]
-    state.particle_cov[p * 6 + 5] = cov[2, 2]
-
-def compute_C(init_cov, F):
-    cov = torch.zeros((init_cov.shape[0], 6))
-    for i in range(0, init_cov.shape[0]):
-        F = state.particle_F_trial[p]
-
-        init_cov = torch.zeros()
-        init_cov[0, 0] = state.particle_init_cov[i * 6]
-        init_cov[0, 1] = state.particle_init_cov[i * 6 + 1]
-        init_cov[0, 2] = state.particle_init_cov[i * 6 + 2]
-        init_cov[1, 0] = state.particle_init_cov[i * 6 + 1]
-        init_cov[1, 1] = state.particle_init_cov[i * 6 + 3]
-        init_cov[1, 2] = state.particle_init_cov[i * 6 + 4]
-        init_cov[2, 0] = state.particle_init_cov[i * 6 + 2]
-        init_cov[2, 1] = state.particle_init_cov[i * 6 + 4]
-        init_cov[2, 2] = state.particle_init_cov[i * 6 + 5]
-
-        cov = F * init_cov * wp.transpose(F)

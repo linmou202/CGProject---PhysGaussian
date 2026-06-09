@@ -17,12 +17,10 @@ class MPMStateStruct(object):
     particle_x: wp.array(dtype=wp.vec3)  # current position
     particle_v: wp.array(dtype=wp.vec3)  # particle velocity
     particle_F: wp.array(dtype=wp.mat33)  # particle elastic deformation gradient
-    particle_init_cov: wp.array(dtype=float)  # initial covariance matrix
     particle_cov: wp.array(dtype=float)  # current covariance matrix
     particle_F_trial: wp.array(
         dtype=wp.mat33
     )  # apply return mapping on this to obtain elastic def grad
-    particle_R: wp.array(dtype=wp.mat33)  # rotation matrix
     particle_stress: wp.array(dtype=wp.mat33)  # Kirchoff stress, elastic stress
     particle_C: wp.array(dtype=wp.mat33)
     particle_vol: wp.array(dtype=float)  # current volume
@@ -56,18 +54,11 @@ class MPMStateStruct(object):
         self.particle_F = wp.zeros(
             shape, dtype=wp.mat33, device=device, requires_grad=requires_grad
         )
-        self.particle_init_cov = wp.zeros(
-            shape, dtype=float, device=device, requires_grad=requires_grad
-        )
         self.particle_cov = wp.zeros(
             shape * 6, dtype=float, device=device, requires_grad=requires_grad
         )
 
         self.particle_F_trial = wp.zeros(
-            shape, dtype=wp.mat33, device=device, requires_grad=requires_grad
-        )
-
-        self.particle_R = wp.zeros(
             shape, dtype=wp.mat33, device=device, requires_grad=requires_grad
         )
 
@@ -160,9 +151,6 @@ class MPMStateStruct(object):
             self.particle_cov = wp.from_numpy(
                 cov_numpy, dtype=float, device=device, requires_grad=False
             )
-            self.particle_init_cov = wp.from_numpy(
-                cov_numpy, dtype=float, device=device, requires_grad=False
-            )
 
         if tensor_velocity is not None:
             self.particle_v = from_torch_safe(
@@ -209,9 +197,6 @@ class MPMStateStruct(object):
             cov_numpy = tensor_cov.reshape(-1).detach().clone().cpu().numpy()
             self.particle_cov = wp.from_numpy(
                 cov_numpy, dtype=float, device=device, requires_grad=requires_grad
-            )
-            self.particle_init_cov = wp.from_numpy(
-                cov_numpy, dtype=float, device=device, requires_grad=False
             )
 
         if tensor_velocity is not None:
@@ -314,7 +299,6 @@ class MPMStateStruct(object):
         self.particle_F_trial.requires_grad = requires_grad
         self.particle_stress.requires_grad = requires_grad
         self.particle_C.requires_grad = requires_grad
-        self.particle_R.requires_grad = requires_grad
 
         self.grid_v_out.requires_grad = requires_grad
         self.grid_v_in.requires_grad = requires_grad
@@ -382,7 +366,6 @@ class MPMStateStruct(object):
 
         # new_state.particle_selection = wp.clone(self.particle_selection, requires_grad=False)
 
-        wp.copy(new_state.particle_init_cov, self.particle_init_cov)
         wp.copy(new_state.particle_vol, self.particle_vol)
         wp.copy(new_state.particle_density, self.particle_density)
         wp.copy(new_state.particle_mass, self.particle_mass)

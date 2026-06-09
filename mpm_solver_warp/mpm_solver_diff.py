@@ -1085,48 +1085,11 @@ class MPMWARPDiff(object):
         return wp.to_torch(mpm_state.particle_v)
 
     def export_particle_F_to_torch(self, mpm_state, mpm_model):
-        F_tensor = wp.to_torch(mpm_state.particle_F)
-        F_tensor = F_tensor.reshape(-1, 9)
+        F_tensor = wp.to_torch(mpm_state.particle_F_trial)
+        F_tensor = F_tensor.reshape(-1, 3, 3)
         return F_tensor
-
-    def export_particle_R_to_torch(self, mpm_state, mpm_model, device="cuda:0"):
-        with wp.ScopedTimer(
-            "compute_R_from_F",
-            synchronize=True,
-            print=False,
-            dict=self.time_profile,
-        ):
-            wp.launch(
-                kernel=compute_R_from_F,
-                dim=self.n_particles,
-                inputs=[mpm_state, mpm_model],
-                device=device,
-            )
-
-        R_tensor = wp.to_torch(mpm_state.particle_R)
-        R_tensor = R_tensor.reshape(-1, 9)
-        return R_tensor
 
     def export_particle_C_to_torch(self, mpm_state, mpm_model):
         C_tensor = wp.to_torch(mpm_state.particle_C)
         C_tensor = C_tensor.reshape(-1, 9)
         return C_tensor
-
-    def export_particle_cov_to_torch(self, mpm_state, mpm_model, device="cuda:0"):
-        if not mpm_model.update_cov_with_F:
-            with wp.ScopedTimer(
-                "compute_cov_from_F",
-                synchronize=True,
-                print=False,
-                dict=self.time_profile,
-            ):
-                wp.launch(
-                    kernel=compute_cov_from_F,
-                    dim=self.n_particles,
-                    inputs=[mpm_state, mpm_model],
-                    device=device,
-                )
-
-        cov = wp.to_torch(mpm_state.particle_cov)
-        return cov
-

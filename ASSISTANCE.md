@@ -105,7 +105,7 @@ python gs_simulation.py --model_path ./model/pillow2sofa_whitebg-trained/ --outp
 安装指令：
 
 ```bash
-conda create -n PhysGaussian python=3.9 mkl=2023.1.0 -y
+conda create -n PhysGaussian python=3.9 -y
 conda activate PhysGaussian
 
 conda install cudatoolkit=11.8
@@ -118,5 +118,19 @@ pip install torch==2.0.0 torchvision==0.15.0 --index-url https://download.pytorc
 pip install -e gaussian-splatting/submodules/diff-gaussian-rasterization/
 
 pip install -e gaussian-splatting/submodules/simple-knn/
+```
+
+
+
+```
+conda create -n PhysGaussian python=3.10 -y
+conda activate PhysGaussian
+
+conda install -c nvidia/label/cuda-12.1.1 cuda-nvcc cuda-cudart-dev cuda-libraries-dev -y
+
+conda install -c conda-forge gcc_linux-64=11 gxx_linux-64=11 -y
+
+pip install -r requirements.txt
+pip install torch==2.1.0+cu121 torchvision==0.16.0+cu121 --extra-index-url https://download.pytorch.org/whl/cu121
 ```
 

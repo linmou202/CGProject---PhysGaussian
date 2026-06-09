@@ -445,9 +445,10 @@ if __name__ == "__main__":
         lr = args.lr,
         device = device
     )
+
     trainer.train(
         temporal_stride = args.temporal_stride,
-        num_substeps = 1,
+        num_substeps = int(time_params["frame_dt"] / time_params["substep_dt"]),
         loss_decay = args.loss_decay,
         device = device
     )
@@ -524,8 +525,8 @@ if __name__ == "__main__":
 
         if args.render_img:
             pos = mpm_solver.export_particle_x_to_torch(mpm_state, mpm_model).to(device)
-            cov3D = mpm_solver.export_particle_cov_to_torch(mpm_state, mpm_model)
-            rot = mpm_solver.export_particle_R_to_torch(mpm_state, mpm_model)
+            particle_F = mpm_solver.export_particle_F_to_torch(mpm_state, mpm_model).to(device)
+            cov3D, rot = Calculate_Cov_and_Rot.apply(mpm_init_cov.to(device), particle_F, device)
             cov3D = cov3D.view(-1, 6).to(device)
             rot = rot.view(-1, 3, 3).to(device)
 

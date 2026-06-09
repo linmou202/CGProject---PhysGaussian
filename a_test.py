@@ -1,9 +1,8 @@
-import torch
-import numpy
-import math
-import cv2
+import warp
 
+warp.init()
 
+"""
 a = torch.zeros(100)
 c = a.clone()
 for i in range(0,100):
@@ -27,7 +26,7 @@ a = cv2.imread("test_img.png")
 
 a = cv2.cvtColor(a, cv2.COLOR_BGR2RGB) # cv writes as bgr, read as bgr.
 cv2.imwrite("converted_img.png", f)
-
+"""
 """
 A = torch.zeros([2,2], dtype=torch.float)
 A[0][0] = 1

@@ -248,7 +248,7 @@ class Trainer:
 
             # substep-3: render gaussian
             cov3D, rot = Calculate_Cov_and_Rot.apply(self.init_cov, particle_F, device)
-            simulated_image = self.stage_renderer.render_image_from_gaussian(particle_pos, cov3D, self.opacity, self.shs, rot)
+            simulated_image = self.stage_renderer.render_image_from_gaussian(particle_pos, cov3D.view(-1, 6), self.opacity, self.shs, rot)
             # print("debug", simulated_video.shape, gt_frame.shape, gaussian_pos.shape, init_xyzs.shape, density.shape, query_mask.sum().item())
 
             # do the backward calculation
