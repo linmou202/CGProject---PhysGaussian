@@ -260,6 +260,7 @@ class Trainer:
 
             loss = loss / (end_time_idx - start_time_idx)
             loss.backward()
+            print(f"""Loss of step {self.step} start_idx {start_time_idx} : {loss}""")
 
             particle_pos, particle_velo, particle_F, particle_C = (
                 particle_pos.detach(),
