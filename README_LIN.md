@@ -1,4 +1,4 @@
-这次框架修改 `config, mpm_solver_warp, utils, ref_data` 这三个文件夹以及 `gs_simulation.py, gs_test.py, train_materials.py` 这三个文件。为了防止对环境的破坏，只替换这些即可。
+这次框架修改 `config, mpm_solver_warp, utils, reference_data` 这三个文件夹以及 `gs_simulation.py, gs_test.py, train_materials.py` 这三个文件。为了防止对环境的破坏，只替换这些即可。
 
 
 
