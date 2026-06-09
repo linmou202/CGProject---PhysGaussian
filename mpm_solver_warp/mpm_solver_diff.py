@@ -143,7 +143,7 @@ class MPMWARPDiff(object):
     def set_E_from_torch(
         self,
         mpm_model,
-        E: Float[Tensor, "n"] | Float[Tensor, "1"],
+        E: Float[Tensor, "n"],
         device="cuda:0",
     ):
         if E.ndim == 0:
