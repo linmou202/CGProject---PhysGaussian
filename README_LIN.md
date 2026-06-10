@@ -1,5 +1,7 @@
 这次框架修改 `config, mpm_solver_warp, utils, reference_data` 这三个文件夹以及 `gs_simulation.py, gs_test.py, train_materials.py` 这三个文件。为了防止对环境的破坏，只替换这些即可。
 
+还将 config 中的 frame_dt 从 2e-2 改成了 5e-3, frame_num 则相应的从 100 改成了400，以减少显存占用。
+
 
 
 测试的 smoke test 指令参考：
