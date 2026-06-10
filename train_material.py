@@ -219,7 +219,7 @@ class Trainer:
                 os.path.join(self.reference_path, f"{end_time_idx-1}.png".rjust(8, "0"))
             )
             gt_frame = torch.from_numpy(cv2.cvtColor(gt_frame, cv2.COLOR_RGB2BGR), ).permute(2, 0, 1).float()
-            gt_frame = gt_frame / 255
+            gt_frame = (gt_frame / 255).to(device)
 
             if start_time_idx != 0:
                 density, youngs_modulus = self.get_material_params(

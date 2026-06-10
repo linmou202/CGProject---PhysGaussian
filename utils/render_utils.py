@@ -120,10 +120,12 @@ def convert_SH(
     rotation: torch.tensor = None,
 ):
     shs_view = shs_view.transpose(1, 2).view(-1, 3, (pc.max_sh_degree + 1) ** 2)
-    dir_pp = position - viewpoint_camera.camera_center.repeat(shs_view.shape[0], 1)
+    raw_dir_pp = position - viewpoint_camera.camera_center.repeat(shs_view.shape[0], 1)
     if rotation is not None:
         n = rotation.shape[0]
-        dir_pp[:n] = torch.matmul(rotation, dir_pp[:n].unsqueeze(2)).squeeze(2)
+        dir_pp = torch.cat((torch.matmul(rotation, raw_dir_pp[:n].unsqueeze(2)).squeeze(2), raw_dir_pp[n:]))
+    else: 
+        dir_pp = raw_dir_pp
 
     dir_pp_normalized = dir_pp / dir_pp.norm(dim=1, keepdim=True)
     sh2rgb = eval_sh(pc.active_sh_degree, shs_view, dir_pp_normalized)
