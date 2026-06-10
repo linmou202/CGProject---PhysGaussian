@@ -10,7 +10,7 @@ import os
 import numpy as np
 import json
 from tqdm import tqdm
-from train_material import *
+from utils.train_material import *
 
 # Gaussian splatting dependencies
 from utils.sh_utils import eval_sh

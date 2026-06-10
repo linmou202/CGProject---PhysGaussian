@@ -432,17 +432,15 @@ class Calculate_Cov_and_Rot(autograd.Function):
     @staticmethod
     def backward(ctx, out_cov_grad: Float[Tensor, "n"], out_rot_grad: Float[Tensor, "n 3 3"]):
         
-        num_particles = ctx.num_particles
-        device = ctx.device
-        cur_cov_wp, cur_rot_wp = ctx.cur_cov_wp, ctx.cur_rot_wp
         init_cov_wp = ctx.init_cov_wp
         F_wp = ctx.F_wp
+        cur_cov_wp = ctx.cur_cov_wp
+        cur_rot_wp = ctx.cur_rot_wp
+        device = ctx.device
+        num_particles = ctx.num_particles
         tape = ctx.tape
-        starting_state = ctx.prev_state
         
         with wp.ScopedDevice(device):
-            
-            assert(out_cov_grad is not None and out_rot_grad is not None)
 
             if out_cov_grad is not None:
                 grad_cov_wp = from_torch_safe(out_cov_grad, wp.float32, requires_grad=False)
@@ -474,7 +472,7 @@ class Calculate_Cov_and_Rot(autograd.Function):
                 if grad_rot_wp is not None:
                     target_rot_detach = wp.clone(cur_rot_wp, device=device, requires_grad=False)
                     wp.launch(
-                        compute_covloss_with_grad, 
+                        compute_rotloss_with_grad, 
                         dim=num_particles,
                         inputs=[
                             cur_rot_wp,

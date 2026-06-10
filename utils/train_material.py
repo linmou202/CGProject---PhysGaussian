@@ -62,7 +62,7 @@ class Trainer:
             lr = 1e-3,
             device = "cuda:0"
         ):
-
+        print("""initializing trainer..""")
         self.ssim = ssim
         self.parameter_scale = parameter_scale
         warmup_step = int(warmup_step * gradient_accumulation_steps)
@@ -195,6 +195,7 @@ class Trainer:
         )
         self.mpm_state.set_require_grad(True)
 
+        print(f"""step {self.step} : get simulation input..""")
         (
             density,
             youngs_modulus,
@@ -215,6 +216,7 @@ class Trainer:
 
             num_step_with_grad = num_substeps * (end_time_idx - start_time_idx)
 
+            print(f"""step {self.step} start_idx {start_time_idx} : get reference...""")
             gt_frame = cv2.imread(
                 os.path.join(self.reference_path, f"{end_time_idx-1}.png".rjust(8, "0"))
             )
@@ -225,7 +227,7 @@ class Trainer:
                 density, youngs_modulus = self.get_material_params(
                     device
                 )
-            
+            print(f"""step {self.step} start_idx {start_time_idx} : do forward...""")
             particle_pos, particle_velo, particle_F, particle_C, particle_cov = (
                 MPMDifferentiableSimulationClean.apply(
                     self.mpm_solver,
@@ -247,11 +249,13 @@ class Trainer:
             )
 
             # substep-3: render gaussian
+            print(f"""step {self.step} start_idx {start_time_idx} : calculate cov and rot...""")
             cov3D, rot = Calculate_Cov_and_Rot.apply(self.init_cov.view(-1), particle_F, device)
             simulated_image = self.stage_renderer.render_image_from_gaussian(particle_pos, cov3D.view(-1, 6), self.opacity, self.shs, rot)
             # print("debug", simulated_video.shape, gt_frame.shape, gaussian_pos.shape, init_xyzs.shape, density.shape, query_mask.sum().item())
 
             # do the backward calculation
+            print(f"""step {self.step} start_idx {start_time_idx} : calculate loss...""")
             l2_loss = 0.5 * F.mse_loss(simulated_image, gt_frame, reduction="mean")
             ssim_loss = compute_ssim(simulated_image, gt_frame)
             loss = l2_loss * (1.0 - self.ssim) + (1.0 - ssim_loss) * self.ssim
@@ -259,8 +263,8 @@ class Trainer:
             loss = loss * (loss_decay**end_time_idx)
 
             loss = loss / (end_time_idx - start_time_idx)
+            print(f"""step {self.step} start_idx {start_time_idx} : loss is {loss}. do backward..""")
             loss.backward()
-            print(f"""Loss of step {self.step} start_idx {start_time_idx} : {loss}""")
 
             particle_pos, particle_velo, particle_F, particle_C = (
                 particle_pos.detach(),
@@ -287,8 +291,8 @@ class Trainer:
             #     self.E_module.E.data.clamp_(1e-2, 1e7)
         
         self.scheduler.step()
-
-        print(f"""E after step {self.step} : {self.E_module.E}""")
+        
+        print(f"""step {self.step} : new E is {self.E_module.E}""")
 
 
     def train(
