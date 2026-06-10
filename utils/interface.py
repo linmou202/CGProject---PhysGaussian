@@ -9,10 +9,9 @@ import warp as wp
 
 from mpm_solver_warp.warp_utils import from_torch_safe, MyTape, CondTape
 from mpm_solver_warp.mpm_solver_diff import MPMWARPDiff
-from mpm_solver_warp.mpm_utils import compute_position_l2_loss, aggregate_grad, compute_posloss_with_grad
+from mpm_solver_warp.mpm_utils import (compute_position_l2_loss, aggregate_grad, compute_posloss_with_grad, 
+                                        compute_Closs_with_grad, compute_Floss_with_grad, compute_posloss_with_grad, compute_veloloss_with_grad)
 from mpm_solver_warp.mpm_data_structure import MPMStateStruct, MPMModelStruct, get_float_array_product
-from mpm_solver_warp.mpm_utils import (compute_Closs_with_grad, compute_Floss_with_grad, 
-                                                compute_posloss_with_grad, compute_veloloss_with_grad)
 
 class MPMDifferentiableSimulationClean(autograd.Function):
     """

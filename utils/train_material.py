@@ -90,14 +90,10 @@ class Trainer:
         self.gradient_accumulation_steps = gradient_accumulation_steps
 
         # init traiable params
-        E_module = Young_Moudulous_Map(E_items, inverted_index, self.particle_init_position.shape[0])
+        E_module = Young_Moudulous_Map(E_items, inverted_index, self.particle_init_position.shape[0], device)
         self.E_module = E_module
 
         # setup simulation
-        wp.init()
-        wp.config.mode = "debug"
-        wp.config.verify_cuda = True
-
         self.mpm_state, self.mpm_model, self.mpm_solver = (
             mpm_state,
             mpm_model,

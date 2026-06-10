@@ -299,7 +299,7 @@ if __name__ == "__main__":
     mpm_init_pos = torch.cat(cls_mpm_init_pos, dim=0)
 
     # build inverted index and filling mask
-    inverted_index = torch.zeros((mpm_init_pos.shape[0]), dtype=torch.int8, device=device)
+    inverted_index = torch.zeros((mpm_init_pos.shape[0]), dtype=torch.int, device=device)
     original_mask = torch.zeros((mpm_init_pos.shape[0]), dtype=torch.bool)
     current_section = 0
     for i in range(0, num_particles):
