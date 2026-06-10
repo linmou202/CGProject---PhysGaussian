@@ -1,5 +1,6 @@
 import argparse
 import os
+import gc
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -37,6 +38,118 @@ from utils.interface import (
 from utils.render_utils import *
 from utils.train_utils import *
 
+
+@torch.no_grad()
+def downsample_particles_with_kmeans(
+        points,
+        num_clusters,
+        max_iter=8,
+        max_pairs_per_chunk=8000000,
+        seed=0,
+):
+    num_points = points.shape[0]
+    num_clusters = int(num_clusters)
+    if num_clusters <= 0 or num_clusters >= num_points:
+        labels = torch.arange(num_points, dtype=torch.long, device=points.device)
+        return points.detach().clone(), labels
+
+    generator = torch.Generator(device=points.device)
+    generator.manual_seed(seed)
+    init_index = torch.randperm(num_points, generator=generator, device=points.device)[:num_clusters]
+    centers = points.detach()[init_index].clone()
+    labels = torch.empty(num_points, dtype=torch.long, device=points.device)
+    chunk_size = max(1, min(num_points, int(max_pairs_per_chunk) // num_clusters))
+
+    print(
+        f"=> kmeans downsample simulation particles from {num_points} to {num_clusters}, "
+        f"chunk_size={chunk_size}, iters={max_iter}"
+    )
+    for iter_idx in range(int(max_iter)):
+        sums = torch.zeros_like(centers)
+        counts = torch.zeros(num_clusters, dtype=points.dtype, device=points.device)
+
+        for start in range(0, num_points, chunk_size):
+            end = min(start + chunk_size, num_points)
+            dist = torch.cdist(points[start:end].detach(), centers)
+            chunk_labels = torch.argmin(dist, dim=1)
+            labels[start:end] = chunk_labels
+            sums.index_add_(0, chunk_labels, points[start:end].detach())
+            counts.index_add_(0, chunk_labels, torch.ones(end - start, dtype=points.dtype, device=points.device))
+
+        non_empty = counts > 0
+        centers[non_empty] = sums[non_empty] / counts[non_empty].unsqueeze(-1)
+        if torch.any(~non_empty):
+            empty_num = int((~non_empty).sum().item())
+            refill_index = torch.randperm(num_points, generator=generator, device=points.device)[:empty_num]
+            centers[~non_empty] = points.detach()[refill_index]
+        print(f"=> kmeans iter {iter_idx + 1}/{max_iter}, empty_clusters={int((~non_empty).sum().item())}")
+
+    return centers, labels
+
+
+@torch.no_grad()
+def average_by_labels(values, labels, num_labels):
+    flat_values = values.detach().reshape(values.shape[0], -1)
+    sums = torch.zeros((num_labels, flat_values.shape[1]), dtype=flat_values.dtype, device=flat_values.device)
+    counts = torch.zeros(num_labels, dtype=flat_values.dtype, device=flat_values.device)
+    sums.index_add_(0, labels, flat_values)
+    counts.index_add_(0, labels, torch.ones(labels.shape[0], dtype=flat_values.dtype, device=flat_values.device))
+    counts = torch.clamp(counts, min=1.0)
+    averaged = sums / counts.unsqueeze(-1)
+    return averaged.reshape((num_labels, *values.shape[1:]))
+
+
+@torch.no_grad()
+def majority_by_labels(values, labels, num_labels):
+    values = values.detach().long()
+    num_classes = int(values.max().item()) + 1
+    combined = labels.long() * num_classes + values
+    counts = torch.bincount(combined, minlength=num_labels * num_classes)
+    counts = counts.reshape(num_labels, num_classes)
+    return torch.argmax(counts, dim=1).to(values.device)
+
+
+@torch.no_grad()
+def compute_drive_neighbor_weights(
+        query_points,
+        drive_points,
+        topk=8,
+        max_pairs_per_chunk=8000000,
+):
+    topk = min(int(topk), drive_points.shape[0])
+    chunk_size = max(1, min(query_points.shape[0], int(max_pairs_per_chunk) // drive_points.shape[0]))
+    all_indices = []
+    all_weights = []
+    print(
+        f"=> computing {topk}-NN interpolation weights for {query_points.shape[0]} points "
+        f"from {drive_points.shape[0]} driving particles"
+    )
+    for start in range(0, query_points.shape[0], chunk_size):
+        end = min(start + chunk_size, query_points.shape[0])
+        dist = torch.cdist(query_points[start:end].detach(), drive_points.detach())
+        values, indices = torch.topk(dist, k=topk, dim=1, largest=False)
+        weights = 1.0 / torch.clamp(values, min=1e-8)
+        weights = weights / torch.clamp(weights.sum(dim=1, keepdim=True), min=1e-8)
+        all_indices.append(indices)
+        all_weights.append(weights)
+    return torch.cat(all_indices, dim=0), torch.cat(all_weights, dim=0)
+
+
+def interpolate_from_driving_particles(
+        query_origin,
+        drive_origin,
+        drive_pos,
+        drive_F,
+        neighbor_index,
+        neighbor_weight,
+):
+    drive_disp = drive_pos - drive_origin
+    query_disp = (drive_disp[neighbor_index] * neighbor_weight.unsqueeze(-1)).sum(dim=1)
+    query_pos = query_origin + query_disp
+    query_F = (drive_F[neighbor_index] * neighbor_weight.unsqueeze(-1).unsqueeze(-1)).sum(dim=1)
+    return query_pos, query_F
+
+
 class Trainer:
     def __init__(
             self,
@@ -60,7 +173,14 @@ class Trainer:
             warmup_step = 5,
             train_iters = 10,
             lr = 1e-3,
-            device = "cuda:0"
+            device = "cuda:0",
+            render_init_pos = None,
+            render_init_cov = None,
+            render_shs = None,
+            render_opacity = None,
+            drive_origin_pos = None,
+            drive_neighbor_index = None,
+            drive_neighbor_weight = None,
         ):
         print("""initializing trainer..""")
         self.ssim = ssim
@@ -72,9 +192,16 @@ class Trainer:
         self.particle_init_position = mpm_solver.export_particle_x_to_torch(mpm_state, mpm_model).detach().clone()
         self.stage_renderer = stage_renderer
         self.reference_path = reference_path
-        self.init_cov = init_cov
-        self.opacity = opacity
-        self.shs = shs
+        self.init_cov = init_cov.detach()
+        self.opacity = opacity.detach()
+        self.shs = shs.detach()
+        self.render_init_pos = render_init_pos
+        self.render_init_cov = render_init_cov
+        self.render_shs = render_shs.detach() if render_shs is not None else None
+        self.render_opacity = render_opacity.detach() if render_opacity is not None else None
+        self.drive_origin_pos = drive_origin_pos
+        self.drive_neighbor_index = drive_neighbor_index
+        self.drive_neighbor_weight = drive_neighbor_weight
 
         self.num_frames = int(num_frames)
         self.frame_length = frame_length
@@ -206,11 +333,14 @@ class Trainer:
         if temporal_stride < 0 or temporal_stride > window_size:
             temporal_stride = window_size
 
-        for start_time_idx in range(0, window_size, temporal_stride):
+        max_start_time_idx = max(0, window_size - temporal_stride)
+        selected_start_time_idx = self.step % (max_start_time_idx + 1)
+        for start_time_idx in [selected_start_time_idx]:
 
             end_time_idx = min(start_time_idx + temporal_stride, window_size)
 
             num_step_with_grad = num_substeps * (end_time_idx - start_time_idx)
+            num_step_without_grad = num_substeps * start_time_idx
 
             print(f"""step {self.step} start_idx {start_time_idx} : get reference...""")
             gt_frame = cv2.imread(
@@ -240,14 +370,32 @@ class Trainer:
                     None,
                     device,
                     True,
-                    0,
+                    num_step_without_grad,
                 )
             )
 
             # substep-3: render gaussian
             print(f"""step {self.step} start_idx {start_time_idx} : calculate cov and rot...""")
-            cov3D, rot = Calculate_Cov_and_Rot.apply(self.init_cov.view(-1), particle_F, device)
-            simulated_image = self.stage_renderer.render_image_from_gaussian(particle_pos, cov3D.view(-1, 6), self.opacity, self.shs, rot)
+            if self.drive_neighbor_index is not None:
+                render_pos, render_F = interpolate_from_driving_particles(
+                    self.render_init_pos.to(device),
+                    self.drive_origin_pos.to(device),
+                    particle_pos,
+                    particle_F,
+                    self.drive_neighbor_index.to(device),
+                    self.drive_neighbor_weight.to(device),
+                )
+                cov3D, rot = Calculate_Cov_and_Rot.apply(self.render_init_cov.view(-1).to(device), render_F, device)
+                simulated_image = self.stage_renderer.render_image_from_gaussian(
+                    render_pos,
+                    cov3D.view(-1, 6),
+                    self.render_opacity,
+                    self.render_shs,
+                    rot,
+                )
+            else:
+                cov3D, rot = Calculate_Cov_and_Rot.apply(self.init_cov.view(-1), particle_F, device)
+                simulated_image = self.stage_renderer.render_image_from_gaussian(particle_pos, cov3D.view(-1, 6), self.opacity, self.shs, rot)
             # print("debug", simulated_video.shape, gt_frame.shape, gaussian_pos.shape, init_xyzs.shape, density.shape, query_mask.sum().item())
 
             # do the backward calculation
@@ -268,6 +416,15 @@ class Trainer:
                 particle_F.detach(),
                 particle_C.detach(),
             )
+            particle_cov = particle_cov.detach()
+            del loss, l2_loss, ssim_loss, simulated_image, gt_frame, cov3D, rot, particle_cov
+            if 'render_pos' in locals():
+                del render_pos
+            if 'render_F' in locals():
+                del render_F
+            wp.synchronize_device(device)
+            torch.cuda.empty_cache()
+            gc.collect()
 
         # do the stepping
         if (

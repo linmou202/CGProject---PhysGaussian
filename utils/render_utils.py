@@ -169,11 +169,11 @@ class STAGERENDERER:
         self.viewpoint_center_worldspace = viewpoint_center_worldspace
         self.observant_coordinates = observant_coordinates
 
-        self.unselected_pos = unselected_pos
-        self.unselected_cov = unselected_cov
-        self.unselected_opacity = unselected_opacity
-        self.unselected_shs = unselected_shs
-        self.init_screen_points = init_screen_points
+        self.unselected_pos = unselected_pos.detach() if unselected_pos is not None else None
+        self.unselected_cov = unselected_cov.detach() if unselected_cov is not None else None
+        self.unselected_opacity = unselected_opacity.detach() if unselected_opacity is not None else None
+        self.unselected_shs = unselected_shs.detach() if unselected_shs is not None else None
+        self.init_screen_points = init_screen_points.detach()
         self.original_mask = original_mask
     
     def set_rasterizer(self, frame_seq):

@@ -44,7 +44,7 @@ from utils.vlm_utils import *
 wp.init()
 wp.config.verify_cuda = True
 
-ti.init(arch=ti.cuda, device_memory_GB=7.0)
+ti.init(arch=ti.cuda, device_memory_GB=float(os.environ.get("TAICHI_DEVICE_MEMORY_GB", "1.0")))
 
 
 class PipelineParamsNoparse:
@@ -89,6 +89,9 @@ if __name__ == "__main__":
     parser.add_argument("--compile_video", action="store_true")
     parser.add_argument("--white_bg", action="store_true")
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--sim_subsample_num", type=int, default=0)
+    parser.add_argument("--sim_subsample_topk", type=int, default=8)
+    parser.add_argument("--sim_subsample_iters", type=int, default=8)
     args = parser.parse_args()
 
     if not os.path.exists(args.model_path):
@@ -131,6 +134,11 @@ if __name__ == "__main__":
     init_screen_points = params["screen_points"]
     init_opacity = params["opacity"]
     init_shs = params["shs"]
+    init_pos = init_pos.detach()
+    init_cov = init_cov.detach()
+    init_screen_points = init_screen_points.detach()
+    init_opacity = init_opacity.detach()
+    init_shs = init_shs.detach()
 
     # throw away low opacity kernels
     mask = init_opacity[:, 0] > preprocessing_params["opacity_threshold"]
@@ -337,6 +345,44 @@ if __name__ == "__main__":
         
         gs_num = num_particles
 
+    render_init_pos = None
+    render_init_cov = None
+    render_shs = None
+    render_opacity = None
+    drive_origin_pos = None
+    drive_neighbor_index = None
+    drive_neighbor_weight = None
+
+    if args.sim_subsample_num > 0 and args.sim_subsample_num < mpm_init_pos.shape[0]:
+        print("Building KMeans driving particles for simulation...")
+        render_init_pos = mpm_init_pos.detach().clone()
+        render_init_cov = mpm_init_cov.detach().clone()
+        render_shs = shs.detach()
+        render_opacity = opacity.detach()
+
+        drive_pos, drive_labels = downsample_particles_with_kmeans(
+            mpm_init_pos,
+            args.sim_subsample_num,
+            max_iter=args.sim_subsample_iters,
+        )
+        drive_cov = average_by_labels(mpm_init_cov, drive_labels, drive_pos.shape[0])
+        drive_inverted_index = majority_by_labels(inverted_index, drive_labels, drive_pos.shape[0])
+        drive_neighbor_index, drive_neighbor_weight = compute_drive_neighbor_weights(
+            render_init_pos,
+            drive_pos,
+            topk=args.sim_subsample_topk,
+        )
+
+        drive_origin_pos = drive_pos.detach().clone()
+        mpm_init_pos = drive_pos
+        mpm_init_cov = drive_cov
+        inverted_index = drive_inverted_index.to(device=device)
+        num_particles = mpm_init_pos.shape[0]
+        print(f"Using {num_particles} KMeans driving particles for MPM simulation.")
+
+        if args.debug:
+            particle_position_tensor_to_ply(mpm_init_pos, "./log/kmeans_driving_particles.ply")
+
     mpm_init_vol = get_particle_volume(
         mpm_init_pos,
         material_params["n_grid"],
@@ -443,7 +489,14 @@ if __name__ == "__main__":
         warmup_step = args.warmup_steps,
         train_iters = args.train_iters,
         lr = args.lr,
-        device = device
+        device = device,
+        render_init_pos = render_init_pos,
+        render_init_cov = render_init_cov,
+        render_shs = render_shs,
+        render_opacity = render_opacity,
+        drive_origin_pos = drive_origin_pos,
+        drive_neighbor_index = drive_neighbor_index,
+        drive_neighbor_weight = drive_neighbor_weight,
     )
 
     trainer.train(
@@ -526,7 +579,21 @@ if __name__ == "__main__":
         if args.render_img:
             pos = mpm_solver.export_particle_x_to_torch(mpm_state, mpm_model).to(device)
             particle_F = mpm_solver.export_particle_F_to_torch(mpm_state, mpm_model).to(device)
-            cov3D, rot = Calculate_Cov_and_Rot.apply(mpm_init_cov.view(-1).to(device), particle_F, device)
+            if drive_neighbor_index is not None:
+                render_pos, render_F = interpolate_from_driving_particles(
+                    render_init_pos.to(device),
+                    drive_origin_pos.to(device),
+                    pos,
+                    particle_F,
+                    drive_neighbor_index.to(device),
+                    drive_neighbor_weight.to(device),
+                )
+                cov3D, rot = Calculate_Cov_and_Rot.apply(render_init_cov.view(-1).to(device), render_F, device)
+                pos = render_pos
+                opacity_render = render_opacity
+                shs_render = render_shs
+            else:
+                cov3D, rot = Calculate_Cov_and_Rot.apply(mpm_init_cov.view(-1).to(device), particle_F, device)
             cov3D = cov3D.view(-1, 6).to(device)
             rot = rot.view(-1, 3, 3).to(device)
 

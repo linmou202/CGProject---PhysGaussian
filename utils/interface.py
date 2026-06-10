@@ -48,8 +48,9 @@ class MPMDifferentiableSimulationClean(autograd.Function):
 
         num_particles = particle_x.shape[0]
 
+        initial_requires_grad = requires_grad and extra_no_grad_steps == 0
         mpm_state.continue_from_torch(
-            particle_x, particle_v, particle_F, particle_C, device=device, requires_grad=True
+            particle_x, particle_v, particle_F, particle_C, device=device, requires_grad=initial_requires_grad
         )
         # set x, v, F, C.
 
@@ -57,7 +58,8 @@ class MPMDifferentiableSimulationClean(autograd.Function):
             E_inp = E.item() # float
             ctx.aggregating_E = True
         else:
-            E_inp = from_torch_safe(E, dtype=wp.float32, requires_grad=True)
+            E_for_init = E.detach() if extra_no_grad_steps > 0 else E
+            E_inp = from_torch_safe(E_for_init, dtype=wp.float32, requires_grad=initial_requires_grad)
             ctx.aggregating_E = False
             
         mpm_solver.set_E(mpm_model, E_inp, device=device)
@@ -67,7 +69,7 @@ class MPMDifferentiableSimulationClean(autograd.Function):
             tensor_density=particle_density,
             selection_mask=query_mask,
             device=device,
-            requires_grad=True,
+            requires_grad=initial_requires_grad,
             update_mass=True)
         
         prev_state = mpm_state
@@ -75,9 +77,22 @@ class MPMDifferentiableSimulationClean(autograd.Function):
         if extra_no_grad_steps > 0:
             with torch.no_grad():
                 for i in range(extra_no_grad_steps):
-                    next_state = prev_state.partial_clone(requires_grad=True)
+                    next_state = prev_state.partial_clone(device=device, requires_grad=False)
                     mpm_solver.p2g2p_differentiable(mpm_model, prev_state, next_state, substep_size, device=device)
                     prev_state = next_state
+            if requires_grad:
+                prev_state.continue_from_torch(
+                    wp.to_torch(prev_state.particle_x).detach().clone(),
+                    wp.to_torch(prev_state.particle_v).detach().clone(),
+                    wp.to_torch(prev_state.particle_F_trial).detach().clone(),
+                    wp.to_torch(prev_state.particle_C).detach().clone(),
+                    device=device,
+                    requires_grad=True,
+                )
+                if E.ndim != 0:
+                    E_inp = from_torch_safe(E, dtype=wp.float32, requires_grad=True)
+                    mpm_solver.set_E(mpm_model, E_inp, device=device)
+                    mpm_solver.prepare_mu_lam(mpm_model, prev_state, device=device)
 
         # following steps will be checkpointed. then replayed in backward
         ctx.prev_state = prev_state
@@ -100,7 +115,7 @@ class MPMDifferentiableSimulationClean(autograd.Function):
             mpm_solver.prepare_mu_lam(mpm_model, prev_state, device=device)
 
             for substep_local in range(num_substeps):
-                next_state = prev_state.partial_clone(requires_grad=True)
+                next_state = prev_state.partial_clone(device=device, requires_grad=requires_grad)
                 mpm_solver.p2g2p_differentiable(mpm_model, prev_state, next_state, substep_size, device=device)
                 next_state_list.append(next_state)
                 prev_state = next_state
@@ -253,6 +268,11 @@ class MPMDifferentiableSimulationClean(autograd.Function):
         density_mask_grad = None
 
         tape.zero()
+        ctx.prev_state = None
+        ctx.next_state_list = None
+        ctx.tape = None
+        ctx.mpm_solver = None
+        ctx.mpm_model = None
         # print(density_grad.abs().sum(), velo_grad.abs().sum(), E_grad.abs().item(), "in sim func")
         # from IPython import embed; embed()
         
@@ -490,6 +510,11 @@ class Calculate_Cov_and_Rot(autograd.Function):
         # print("debug back", velo_grad)
 
         tape.zero()
+        ctx.init_cov_wp = None
+        ctx.F_wp = None
+        ctx.cur_cov_wp = None
+        ctx.cur_rot_wp = None
+        ctx.tape = None
         # print(density_grad.abs().sum(), velo_grad.abs().sum(), E_grad.abs().item(), "in sim func")
         # from IPython import embed; embed()
         
