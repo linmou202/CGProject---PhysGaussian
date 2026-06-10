@@ -81,7 +81,7 @@ if __name__ == "__main__":
     parser.add_argument("--warmup_steps", type=int, default=1)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--num_frames", type=float, default=5)
-    parser.add_argument("--temporal_stride", type=float, default=2)
+    parser.add_argument("--temporal_stride", type=int, default=2)
     parser.add_argument("--loss_decay", type=float, default=0.95)
     parser.add_argument("--output_ply", action="store_true")
     parser.add_argument("--output_h5", action="store_true")
@@ -526,7 +526,7 @@ if __name__ == "__main__":
         if args.render_img:
             pos = mpm_solver.export_particle_x_to_torch(mpm_state, mpm_model).to(device)
             particle_F = mpm_solver.export_particle_F_to_torch(mpm_state, mpm_model).to(device)
-            cov3D, rot = Calculate_Cov_and_Rot.apply(mpm_init_cov.to(device), particle_F, device)
+            cov3D, rot = Calculate_Cov_and_Rot.apply(mpm_init_cov.view(-1).to(device), particle_F, device)
             cov3D = cov3D.view(-1, 6).to(device)
             rot = rot.view(-1, 3, 3).to(device)
 

@@ -291,7 +291,7 @@ def get_cov_from_F(init_cov: wp.array(dtype=float), particle_F: wp.array(dtype=w
 
 
 @wp.kernel
-def get_R_from_F(particle_F: wp.array(dtype=wp.mat33), cur_rot: wp.array(dtype=float)):
+def get_R_from_F(particle_F: wp.array(dtype=wp.mat33), cur_rot: wp.array(dtype=wp.mat33)):
     p = wp.tid()
     F = particle_F[p]
 
@@ -326,12 +326,12 @@ def compute_covloss_with_grad(
 ):
     tid = wp.tid()
 
-    l2 =( (cov_vec[6*tid] - (gt_vec[6*tid] - grad[6*tid] * dt))**2 + 
-          (cov_vec[6*tid + 1] - (gt_vec[6*tid + 1] - grad[6*tid + 1] * dt))**2 +
-          (cov_vec[6*tid + 2] - (gt_vec[6*tid + 2] - grad[6*tid + 2] * dt))**2 +
-          (cov_vec[6*tid + 3] - (gt_vec[6*tid + 3] - grad[6*tid + 3] * dt))**2 +
-          (cov_vec[6*tid + 4] - (gt_vec[6*tid + 4] - grad[6*tid + 4] * dt))**2 +
-          (cov_vec[6*tid + 5] - (gt_vec[6*tid + 5] - grad[6*tid + 5] * dt))**2
+    l2 =( (cov_vec[6*tid] - (gt_vec[6*tid] - grad[6*tid] * dt))**2.0 + 
+          (cov_vec[6*tid + 1] - (gt_vec[6*tid + 1] - grad[6*tid + 1] * dt))**2.0 +
+          (cov_vec[6*tid + 2] - (gt_vec[6*tid + 2] - grad[6*tid + 2] * dt))**2.0 +
+          (cov_vec[6*tid + 3] - (gt_vec[6*tid + 3] - grad[6*tid + 3] * dt))**2.0 +
+          (cov_vec[6*tid + 4] - (gt_vec[6*tid + 4] - grad[6*tid + 4] * dt))**2.0 +
+          (cov_vec[6*tid + 5] - (gt_vec[6*tid + 5] - grad[6*tid + 5] * dt))**2.0
         )
     
     wp.atomic_add(loss, 0, l2)
@@ -382,12 +382,12 @@ class Calculate_Cov_and_Rot(autograd.Function):
         init_cov: Float[Tensor, "n"],
         particle_F: Float[Tensor, "n 3 3"],
         device
-    ) -> Tuple[Float[Tensor, "n 3"], Float[Tensor, "n 3"], Float[Tensor, "n 9"], Float[Tensor, "n 9"], Float[Tensor, "n 6"]]:
+    ) -> Tuple[Float[Tensor, "n"], Float[Tensor, "n 3 3"]]:
 
         num_particles = particle_F.shape[0]
 
         # following steps will be checkpointed. then replayed in backward
-        init_cov_wp = from_torch_safe(init_cov, dtype=float, requires_grad=True)
+        init_cov_wp = from_torch_safe(init_cov, dtype=wp.float32, requires_grad=True)
         F_wp = from_torch_safe(particle_F, dtype=wp.mat33, requires_grad=True)
         cur_cov_wp = wp.zeros_like(init_cov_wp) 
         cur_rot_wp = wp.zeros_like(F_wp) 
@@ -445,12 +445,12 @@ class Calculate_Cov_and_Rot(autograd.Function):
             assert(out_cov_grad is not None and out_rot_grad is not None)
 
             if out_cov_grad is not None:
-                grad_cov_wp = from_torch_safe(out_cov_grad, dtype=float, requires_grad=False)
+                grad_cov_wp = from_torch_safe(out_cov_grad, wp.float32, requires_grad=False)
             else:
                 grad_cov_wp = None
             
             if out_rot_grad is not None:
-                grad_rot_wp = from_torch_safe(out_rot_grad, dtype=float, requires_grad=False)
+                grad_rot_wp = from_torch_safe(out_rot_grad, dtype=wp.mat33, requires_grad=False)
             else:
                 grad_rot_wp = None
             
