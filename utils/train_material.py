@@ -207,7 +207,7 @@ class Trainer:
         self.frame_length = frame_length
         self.window_size_schduler = LinearStepAnneal(
             train_iters,
-            start_state=[int(num_frames / 4)],
+            start_state=[int(num_frames / 4) + 1],
             end_state=[num_frames],
             plateau_iters=-1,
             warmup_step=3,
@@ -333,14 +333,12 @@ class Trainer:
         if temporal_stride < 0 or temporal_stride > window_size:
             temporal_stride = window_size
 
-        max_start_time_idx = max(0, window_size - temporal_stride)
-        selected_start_time_idx = self.step % (max_start_time_idx + 1)
-        for start_time_idx in [selected_start_time_idx]:
+        for start_time_idx in range(0, window_size, temporal_stride):
 
             end_time_idx = min(start_time_idx + temporal_stride, window_size)
 
             num_step_with_grad = num_substeps * (end_time_idx - start_time_idx)
-            num_step_without_grad = num_substeps * start_time_idx
+            num_step_without_grad = 0
 
             print(f"""step {self.step} start_idx {start_time_idx} : get reference...""")
             gt_frame = cv2.imread(

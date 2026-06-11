@@ -242,7 +242,7 @@ class STAGERENDERER:
         colors_precomp = convert_SH(shs, self.current_camera, self.gaussians, pos, rot)
         rendering, raddi = self.rasterize(
             means3D=pos,
-            means2D=self.init_screen_points,
+            means2D=torch.zeros_like(pos),
             shs=None,
             colors_precomp=colors_precomp,
             opacities=opacity,
