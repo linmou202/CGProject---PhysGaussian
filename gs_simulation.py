@@ -81,8 +81,8 @@ if __name__ == "__main__":
     parser.add_argument("--warmup_steps", type=int, default=1)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--num_frames", type=float, default=5)
-    parser.add_argument("--temporal_stride", type=int, default=2)
-    parser.add_argument("--loss_decay", type=float, default=0.95)
+    parser.add_argument("--temporal_stride", type=int, default=1)
+    parser.add_argument("--loss_decay", type=float, default=0.98)
     parser.add_argument("--output_ply", action="store_true")
     parser.add_argument("--output_h5", action="store_true")
     parser.add_argument("--render_img", action="store_true")
@@ -225,7 +225,7 @@ if __name__ == "__main__":
     num_items = len(cls_pos) - 1
     assert num_items >= 0
     cluster_index = []
-    for i in range (0, num_items):
+    for i in range (0, num_items+1):
         cluster_index.append(None)
         cluster_index.append(cls_pos[i].shape[0])
 
@@ -284,20 +284,16 @@ if __name__ == "__main__":
             num_particles += cls_mpm_init_pos[i].shape[0]
         
         cls_mpm_init_pos.append(cls_pos[num_items].to(device=device))
-        cluster_index.append(num_particles)
+        cluster_index[2*num_items] = num_particles
+        cluster_index[2*num_items + 1] = num_particles + cluster_index[2*num_items + 1]
         num_particles += cls_mpm_init_pos[num_items].shape[0]
-        cluster_index.append(num_particles)
 
         if args.debug:
             particle_position_tensor_list_to_ply(cls_mpm_init_pos, "./log/filled_particles.ply")
         
     else:
-        # create index space for the non-clustered points
-        cluster_index.append(None)
-        cluster_index.append(None)
         for i in range(0, num_items+1):
             cls_mpm_init_pos.append(cls_pos[i].to(device=device))
-
             cluster_index[2*i] = num_particles
             cluster_index[2*i + 1] = num_particles + cluster_index[2*i + 1]
             num_particles += cls_mpm_init_pos[i].shape[0]

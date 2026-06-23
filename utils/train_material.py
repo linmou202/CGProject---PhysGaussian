@@ -207,7 +207,7 @@ class Trainer:
         self.frame_length = frame_length
         self.window_size_schduler = LinearStepAnneal(
             train_iters,
-            start_state=[int(num_frames / 4) + 1],
+            start_state=[2],
             end_state=[num_frames],
             plateau_iters=-1,
             warmup_step=3,
@@ -236,17 +236,11 @@ class Trainer:
         mpm_solver.prepare_mu_lam(mpm_model, mpm_state, device)
 
         # setup optimizer and scheduler
-        trainable_params = self.E_module.parameters()
-        optim_list = [
-            {"params": trainable_params, "lr": lr * 1e-10},
-        ]
-
-        self.optimizer = torch.optim.AdamW(
-            optim_list,
+        self.optimizer = torch.optim.SGD(
+            self.E_module.parameters(),
             lr=lr,
             weight_decay=0.0,
         )
-        self.trainable_params = trainable_params
         self.scheduler = get_linear_schedule_with_warmup(
             optimizer=self.optimizer,
             num_warmup_steps=warmup_step,
